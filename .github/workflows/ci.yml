@@ -38,6 +38,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --all-features
 
+  # Enforcement for G4: "no network access, no telemetry". The PRD's promise
+  # that sift makes zero outbound connections is only credible if it is
+  # mechanically enforced, so this is a required check rather than a convention.
+  deps:
+    name: dependency audit
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: bash scripts/audit-deps.sh
+
   # Apple Silicon only — x86_64-apple-darwin is not a supported target, so there
   # is no build matrix, no universal binary, and no `lipo` step in the release
   # pipeline (PR-44).

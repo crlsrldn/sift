@@ -1,0 +1,13 @@
+//! `sift` — an automated, safety-first disk reclamation agent for macOS.
+//!
+//! The crate is split into a library and a thin binary so that integration
+//! tests in `tests/` can exercise real internals. The safety guarantees this
+//! tool makes (allowlist containment, walker termination, quarantine
+//! round-tripping) are only credible if they are tested against the actual
+//! implementation rather than a reimplementation, and that requires a library
+//! target.
+
+pub mod error;
+pub mod logging;
+
+pub use error::{ExitCode, Result, ScannerError, SiftError};
