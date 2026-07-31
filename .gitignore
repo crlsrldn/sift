@@ -1,0 +1,22 @@
+/target
+**/*.rs.bk
+*.profraw
+
+# macOS
+.DS_Store
+
+# Release artifacts (built by scripts/build-universal.sh in PR-44)
+/dist
+/sift
+
+# Planning documents (PRD, technical spec, PR plan).
+#
+# Excluded by default because this is a PUBLIC repository and those documents
+# contain business context — company ownership, cost decisions, open commercial
+# questions — that was not written for publication.
+#
+# They are genuinely good public artifacts for a tool whose entire pitch is
+# auditability, so this is a deliberate default rather than a permanent one:
+# delete these two lines to publish them.
+/sift-docs/
+/sift-prd.zip
