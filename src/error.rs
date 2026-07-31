@@ -87,6 +87,12 @@ pub enum SiftError {
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
+
+    /// Emitting `--json` output failed. Maps to Runtime rather than getting its
+    /// own exit code: from the caller's perspective a report that could not be
+    /// serialized is an internal failure, not a distinct condition to branch on.
+    #[error("serialization failed: {0}")]
+    Serialization(#[from] serde_json::Error),
 }
 
 impl SiftError {
@@ -99,6 +105,7 @@ impl SiftError {
             SiftError::ScannerErrors { .. } => ExitCode::ScannerErrors,
             SiftError::Usage(_) => ExitCode::Usage,
             SiftError::Io(_) => ExitCode::Runtime,
+            SiftError::Serialization(_) => ExitCode::Runtime,
         }
     }
 }
