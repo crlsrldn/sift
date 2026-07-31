@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-features
+
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
+
+      # PR-01 exit criterion: `sift --version` prints the crate version.
+      # Only checkable on the native slice; the x86_64 build is compile-only
+      # (macos-15 runners are arm64 and Rosetta is not assumed available).
+      - name: Verify --version
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          set -euo pipefail
+          expected="sift $(cargo metadata --format-version 1 --no-deps \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')"
+          actual="$(./target/${{ matrix.target }}/release/sift --version)"
+          echo "expected: $expected"
+          echo "actual:   $actual"
+          [ "$expected" = "$actual" ]
+
+  msrv:
+    name: msrv
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      # rust-toolchain.toml pins the *development* toolchain. This job verifies
+      # the separately declared MSRV (`rust-version` in Cargo.toml) actually
+      # builds, which is the PR-01 exit criterion. Removing the pin file is the
+      # only way to install a different channel in this checkout.
+      - name: Read MSRV from Cargo.toml
+        id: msrv
+        run: |
+          set -euo pipefail
+          rm -f rust-toolchain.toml
+          msrv="$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)"
+          echo "version=$msrv" >> "$GITHUB_OUTPUT"
+          echo "MSRV is $msrv"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv-${{ steps.msrv.outputs.version }}
+      - run: cargo build --all-features

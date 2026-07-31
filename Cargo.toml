@@ -1,0 +1,74 @@
+[package]
+name = "sift"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "An automated, safety-first disk reclamation agent for macOS"
+authors = ["Cindral Labs LLC"]
+license = "MIT"
+repository = "https://github.com/crlsrldn/sift"
+readme = "README.md"
+keywords = ["macos", "disk", "cleanup", "storage", "apfs"]
+categories = ["command-line-utilities", "filesystem"]
+
+# Distribution is a Homebrew tap + GitHub Releases (spec §13), not crates.io.
+# See PR plan §0.1: the `sift` name on crates.io is not required and not claimed.
+publish = false
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+jwalk = "0.8"                  # parallel directory walk (FR-7)
+rayon = "1"                    # scanner-level parallelism
+libc = "0.2"                   # statfs, lstat, st_blocks, renamex_np
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1"
+thiserror = "2"
+globset = "0.4"                # exclude patterns (FR-24)
+humansize = "2"
+uuid = { version = "1", features = ["v7"] }
+plist = "1"                    # LaunchAgent generation (FR-18)
+trash = "5"                    # NSFileManager trashItem fallback (FR-12)
+
+# APFS "important usage" capacity via NSURL resource values (FR-5, spec §5.1).
+#
+# PR plan correction C5: the technical spec pins objc2 0.5 / objc2-foundation 0.2.
+# That pair is stale AND mismatched — these two crates are release-coupled and a
+# mismatched pair does not compile. They must always be bumped together.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = [
+    "std",
+    "NSURL",
+    "NSString",
+    "NSDictionary",
+    "NSArray",
+    "NSValue",
+    "NSError",
+] }
+
+# Deliberately NOT a dependency (PR plan correction C2):
+#   directories — on macOS it resolves config to ~/Library/Application Support,
+#   contradicting the ~/.config/sift and ~/.local/state/sift paths the spec
+#   mandates in §8 and §11. Path resolution is hand-rolled in src/paths.rs (PR-03).
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+# `strip` is deliberately left off here. The release pipeline strips explicitly
+# and then re-signs, because both `lipo` and `strip` invalidate code signatures
+# and arm64 macOS refuses to execute an unsigned binary (PR plan correction C7).
+strip = false
+
+# `panic = "abort"` must NOT be set. Scanner panic isolation (FR-2, PR-09) relies
+# on std::panic::catch_unwind so that one bad scanner cannot abort a scheduled
+# run. Aborting on panic would silently defeat that guarantee.
+panic = "unwind"

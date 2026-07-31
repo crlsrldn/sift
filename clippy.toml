@@ -1,0 +1,2 @@
+# Keep clippy's suggestions within what the declared MSRV can actually compile.
+msrv = "1.85"
