@@ -1,78 +1,70 @@
 //! `sift` binary entry point.
 //!
-//! Deliberately thin: it parses arguments, initializes logging, dispatches, and
-//! translates a [`SiftError`] into a process exit code. All real work lives in
-//! the library so that `tests/` can exercise it directly.
-//!
-//! The hand-rolled argument handling here is replaced by `clap` in PR-04, which
-//! introduces the full command surface from PRD §7.
+//! Deliberately thin: parse arguments, initialize logging, load config,
+//! dispatch, and translate a [`SiftError`] into a process exit code. All real
+//! work lives in the library so `tests/` can exercise it directly.
 
-use sift::{
-    logging::{self, LogFormat},
-    ExitCode, SiftError,
-};
-
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-const USAGE: &str = "\
-sift — automated, safety-first disk reclamation for macOS
-
-USAGE:
-    sift [OPTIONS]
-
-OPTIONS:
-    -V, --version    Print version information
-    -v, --verbose    Increase log verbosity
-    -h, --help       Print this message
-
-ENVIRONMENT:
-    SIFT_LOG         Log filter, e.g. `sift=debug` (overrides --verbose)
-
-This binary is a scaffold. No scanning or deletion capability is implemented yet.
-";
+use clap::Parser;
+use sift::cli::{Cli, Command, ConfigCommand, GlobalArgs};
+use sift::commands::{config_check, not_implemented};
+use sift::config::Config;
+use sift::logging::{self, LogFormat};
+use sift::{ExitCode, Result};
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let verbose = args.iter().any(|a| a == "-v" || a == "--verbose");
-    let scheduled = args.iter().any(|a| a == "--scheduled");
+    // clap exits 2 on parse failure by default; spec §11 says usage errors are
+    // 64, so parse errors are intercepted and re-coded rather than left to clap.
+    let cli = match Cli::try_parse() {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = e.print();
+            let code = match e.kind() {
+                clap::error::ErrorKind::DisplayHelp
+                | clap::error::ErrorKind::DisplayVersion
+                | clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+                    ExitCode::Success
+                }
+                _ => ExitCode::Usage,
+            };
+            std::process::exit(code.as_i32());
+        }
+    };
 
-    logging::init(LogFormat::for_run(scheduled), verbose);
+    let (command, global) = cli.effective_command();
+    logging::init(LogFormat::for_run(global.scheduled), global.verbose);
 
-    match run(&args) {
+    match run(command, &global) {
         Ok(()) => std::process::exit(ExitCode::Success.as_i32()),
         Err(err) => {
             let code = err.exit_code();
             // Errors go to stderr as plain text regardless of log format: a
             // failure the user must act on should never be buried in a filtered
-            // log stream or swallowed by a level setting.
+            // log stream.
             eprintln!("sift: {err}");
             std::process::exit(code.as_i32());
         }
     }
 }
 
-fn run(args: &[String]) -> sift::Result<()> {
-    let positional: Vec<&str> = args
-        .iter()
-        .map(String::as_str)
-        .filter(|a| !matches!(*a, "-v" | "--verbose" | "--scheduled"))
-        .collect();
+fn run(command: Command, global: &GlobalArgs) -> Result<()> {
+    // Config is loaded for every command, including the stubs. An invalid
+    // config should fail with exit 2 the moment sift runs, not later when the
+    // command that happens to read a particular key finally lands.
+    let config = match &global.config {
+        Some(path) => Config::load_from(path)?,
+        None => Config::load()?,
+    };
 
-    match positional.first().copied() {
-        Some("-V") | Some("--version") => {
-            println!("sift {VERSION}");
-            Ok(())
-        }
-        Some("-h") | Some("--help") => {
-            print!("{USAGE}");
-            Ok(())
-        }
-        None => {
-            println!("sift {VERSION}");
-            Ok(())
-        }
-        Some(other) => Err(SiftError::Usage(format!(
-            "unrecognized argument `{other}`; try `sift --help`"
-        ))),
+    match command {
+        Command::Config(ConfigCommand::Check) => config_check::run(&config, global.json),
+
+        Command::Scan(_) => not_implemented("scan", "PR-09"),
+        Command::Clean(_) => not_implemented("clean", "PR-22"),
+        Command::Purge(_) => not_implemented("purge", "PR-20"),
+        Command::Restore(_) => not_implemented("restore", "PR-21"),
+        Command::Report(_) => not_implemented("report", "PR-17"),
+        Command::Doctor => not_implemented("doctor", "PR-08"),
+        Command::Install => not_implemented("install", "PR-34"),
+        Command::Uninstall => not_implemented("uninstall", "PR-34"),
     }
 }
