@@ -2,7 +2,7 @@
 name = "sift"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "An automated, safety-first disk reclamation agent for macOS"
 authors = ["Cindral Labs LLC"]
 license = "MIT"

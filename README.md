@@ -36,8 +36,8 @@ These are load-bearing, not aspirational. Each is enforced by tests.
 ## Requirements
 
 - macOS 13 Ventura or later, tested through macOS 26
+- **Apple Silicon only.** Intel Macs are not supported.
 - APFS (HFS+ volumes are detected and skipped)
-- Apple Silicon primary; x86_64 best-effort
 
 ## Building
 
