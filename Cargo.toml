@@ -48,6 +48,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSArray",
     "NSValue",
     "NSError",
+    "NSObject",
 ] }
 
 # Deliberately NOT a dependency (PR plan correction C2):
