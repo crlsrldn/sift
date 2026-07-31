@@ -7,7 +7,12 @@
 //! implementation rather than a reimplementation, and that requires a library
 //! target.
 
+pub mod config;
 pub mod error;
 pub mod logging;
+pub mod paths;
+pub mod risk;
 
+pub use config::Config;
 pub use error::{ExitCode, Result, ScannerError, SiftError};
+pub use risk::Risk;
