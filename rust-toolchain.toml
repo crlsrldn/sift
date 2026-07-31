@@ -1,0 +1,19 @@
+# Pinned for reproducible builds (PRD §8 risk table: "Ship reproducible builds").
+#
+# This pins the *development* toolchain, not the MSRV. The MSRV is declared as
+# `rust-version` in Cargo.toml and is verified independently by the `msrv` CI job,
+# which installs exactly that toolchain and builds against it.
+#
+# Pinning rust-toolchain.toml to the MSRV itself — as the PR plan's PR-01 text
+# literally suggested — would force all development onto the oldest supported
+# compiler and lose access to current diagnostics. Splitting the two is the
+# standard arrangement and still satisfies the PR-01 exit criterion.
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]
+targets = ["aarch64-apple-darwin"]
+profile = "minimal"
+
+# Apple Silicon only. The technical spec listed x86_64-apple-darwin as
+# "best-effort"; that target is dropped entirely. Consequences, all simplifying:
+# no `lipo`, no universal binary, and no per-slice signature problem in PR-44.
