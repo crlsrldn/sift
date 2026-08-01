@@ -97,6 +97,13 @@ fn preview_cmd(cfg: &Config, json: bool) -> Result<()> {
 
     println!("sift — install --dry-run. Nothing has been written or loaded.");
     println!();
+    if install::is_build_artifact(&exe) {
+        println!(
+            "  {}",
+            install::build_artifact_warning(&exe).replace('\n', "\n  ")
+        );
+        println!();
+    }
     println!("  would write  {}", plist_path.display());
     println!(
         "  would run    launchctl bootstrap {} {}",
