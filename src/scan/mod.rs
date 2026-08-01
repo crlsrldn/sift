@@ -384,8 +384,13 @@ fn run_one(s: &dyn Scanner, ctx: &ScanCtx) -> Outcome {
 }
 
 pub mod app_caches;
+pub mod containers;
+pub mod homebrew;
 pub mod logs;
+pub mod node;
+pub mod python;
 pub mod rust;
+pub mod simulators;
 pub mod xcode;
 
 /// The production registry.
@@ -401,6 +406,11 @@ pub fn registry() -> Registry {
         .with(Box::new(rust::CargoCache)) // S7
         .with(Box::new(app_caches::AppCaches)) // S14
         .with(Box::new(logs::Logs)) // S17
+        .with(Box::new(simulators::Simulators)) // S5
+        .with(Box::new(homebrew::Homebrew)) // S8
+        .with(Box::new(containers::Containers)) // S9
+        .with(Box::new(node::NodeCaches)) // S10
+        .with(Box::new(python::PythonCaches)) // S11
 }
 
 /// Compile a `--only` glob into a set matching scanner ids.
