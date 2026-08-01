@@ -7,6 +7,7 @@
 //! implementation rather than a reimplementation, and that requires a library
 //! target.
 
+pub mod action;
 pub mod caps;
 pub mod cli;
 pub mod commands;
