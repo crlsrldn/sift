@@ -437,12 +437,16 @@ fn run_one(s: &dyn Scanner, ctx: &ScanCtx) -> Outcome {
 
 pub mod app_caches;
 pub mod containers;
+pub mod downloads;
 pub mod homebrew;
+pub mod ios_backups;
 pub mod logs;
 pub mod node;
 pub mod python;
 pub mod rust;
 pub mod simulators;
+pub mod snapshots;
+pub mod trash;
 pub mod xcode;
 
 /// The production registry.
@@ -463,6 +467,12 @@ pub fn registry() -> Registry {
         .with(Box::new(containers::Containers)) // S9
         .with(Box::new(node::NodeCaches)) // S10
         .with(Box::new(python::PythonCaches)) // S11
+        // Destructive tier. Registered so they appear in `doctor` and
+        // `config check`; inert until BOTH config switches are set.
+        .with(Box::new(snapshots::Snapshots)) // S1
+        .with(Box::new(trash::Trash)) // S12
+        .with(Box::new(downloads::Downloads)) // S13
+        .with(Box::new(ios_backups::IosBackups)) // S15
 }
 
 /// Compile a `--only` glob into a set matching scanner ids.
