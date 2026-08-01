@@ -16,6 +16,7 @@
 //!   cannot find is not a guarantee.
 
 use crate::action::{breaker, filter, liveness, purge, quarantine};
+use crate::agent::gates;
 use crate::caps::Capabilities;
 use crate::config::Config;
 use crate::fs::volume;
@@ -41,6 +42,44 @@ pub fn run(
         Capabilities::probe(),
     )?
     .with_delegated_estimates(estimate_delegated);
+
+    // FR-20: the scheduling gates run BEFORE anything else in --scheduled
+    // mode — before the scan, before the expired-run purge. A gated run must
+    // cost nothing, not just decline at the end.
+    if scheduled {
+        let last = history::recent(365).ok().and_then(|rs| {
+            rs.iter()
+                .rev()
+                .find(|r| r.gated_reason.is_none())
+                .map(|r| r.started_at)
+        });
+
+        if let Some(gate) = gates::evaluate(cfg, &gates::inputs(&ctx.root_volume, last)) {
+            let reason = gate.describe();
+            tracing::info!(reason = %reason, "scheduled run gated");
+
+            let mut record =
+                history::RunRecord::from_scan(&crate::scan::ScanReport::default(), &ctx, "clean");
+            record.gated_reason = Some(reason.clone());
+            let _ = history::append(&record);
+
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "schema_version": 1,
+                        "gated": true,
+                        "reason": reason,
+                    }))?
+                );
+            } else {
+                println!("sift — skipped: {reason}");
+            }
+            // Exit 0. Declining to work is the correct outcome, and launchd
+            // must not see a failure (spec §11).
+            return Ok(());
+        }
+    }
 
     // FR-13: expired runs are purged at the start of the next run. Skipped
     // under --dry-run, which must not mutate anything at all.

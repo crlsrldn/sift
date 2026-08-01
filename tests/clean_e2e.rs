@@ -398,3 +398,123 @@ fn scan_remains_read_only_after_clean_exists() {
         "scan created a quarantine run"
     );
 }
+
+// ---------------------------------------------------------------------------
+// FR-20 — the scheduling gates
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_scheduled_run_above_the_free_space_floor_is_gated_and_costs_nothing() {
+    // FR-20. The guarantee is not "declines at the end" — a gated run must not
+    // scan, purge, or stage. This machine has more than 1 byte free, so a 1-byte
+    // floor gates unconditionally regardless of the host's actual disk.
+    let sb = Sandbox::new();
+    let cache = sb.seed_cargo_cache(64 * 1024);
+    std::fs::create_dir_all(sb.dir.path().join("config/sift")).unwrap();
+    std::fs::write(
+        sb.dir.path().join("config/sift/config.toml"),
+        "[general]\nfree_space_floor = \"1\"\n\n[schedule]\nmax_days_between_runs = 36500\n",
+    )
+    .unwrap();
+
+    // A prior run, so the overdue override does not fire.
+    let history = sb.dir.path().join("state/sift");
+    std::fs::create_dir_all(&history).unwrap();
+    let recent = chrono::Local::now() - chrono::Duration::days(1);
+    std::fs::write(
+        history.join("history.jsonl"),
+        format!(
+            r#"{{"run_id":"prior","started_at":"{}","duration_ms":1,"free_before":1,"free_after":1,"per_scanner":{{}},"command":"clean"}}"#,
+            recent.to_rfc3339()
+        ) + "\n",
+    )
+    .unwrap();
+
+    let before = snapshot(&cache);
+    let out = sb.run(&["clean", "--yes", "--scheduled"]);
+    let after = snapshot(&cache);
+
+    // Exit 0: declining is correct, and launchd must not see a failure.
+    assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
+    assert!(stdout(&out).contains("skipped"), "{}", stdout(&out));
+    assert_eq!(before, after, "a gated run touched user data");
+    assert!(
+        !sb.dir.path().join("state/sift/quarantine").exists(),
+        "a gated run created a quarantine"
+    );
+}
+
+#[test]
+fn a_gated_run_records_its_reason_in_history() {
+    // FR-8's `gated_reason`. Without it, `sift report` cannot distinguish "ran
+    // and found nothing" from "declined to run", and the gate rate is
+    // unknowable.
+    let sb = Sandbox::new();
+    std::fs::create_dir_all(sb.dir.path().join("config/sift")).unwrap();
+    std::fs::write(
+        sb.dir.path().join("config/sift/config.toml"),
+        "[general]\nfree_space_floor = \"1\"\n\n[schedule]\nmax_days_between_runs = 36500\n",
+    )
+    .unwrap();
+
+    let history_dir = sb.dir.path().join("state/sift");
+    std::fs::create_dir_all(&history_dir).unwrap();
+    let recent = chrono::Local::now() - chrono::Duration::days(1);
+    std::fs::write(
+        history_dir.join("history.jsonl"),
+        format!(
+            r#"{{"run_id":"prior","started_at":"{}","duration_ms":1,"free_before":1,"free_after":1,"per_scanner":{{}},"command":"clean"}}"#,
+            recent.to_rfc3339()
+        ) + "\n",
+    )
+    .unwrap();
+
+    sb.run(&["clean", "--yes", "--scheduled"]);
+
+    let text = std::fs::read_to_string(history_dir.join("history.jsonl")).unwrap();
+    assert!(text.contains("gated_reason"), "{text}");
+    assert!(text.contains("above the"), "{text}");
+}
+
+#[test]
+fn a_scheduled_run_below_the_floor_proceeds_normally() {
+    // The other half: the gate must not be so eager that the tool never runs.
+    let sb = Sandbox::new();
+    let cache = sb.seed_cargo_cache(64 * 1024);
+    std::fs::create_dir_all(sb.dir.path().join("config/sift")).unwrap();
+    std::fs::write(
+        sb.dir.path().join("config/sift/config.toml"),
+        "[general]\nfree_space_floor = \"100TiB\"\n",
+    )
+    .unwrap();
+
+    let out = sb.run(&["clean", "--yes", "--scheduled"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
+    assert!(
+        !cache.exists(),
+        "the run was gated when it should have proceeded: {}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn scheduled_mode_does_not_prompt() {
+    // There is no TTY under launchd. A prompt would hang the agent forever.
+    let sb = Sandbox::new();
+    sb.seed_cargo_cache(64 * 1024);
+    std::fs::create_dir_all(sb.dir.path().join("config/sift")).unwrap();
+    std::fs::write(
+        sb.dir.path().join("config/sift/config.toml"),
+        "[general]\nfree_space_floor = \"100TiB\"\n",
+    )
+    .unwrap();
+
+    // No --yes, and no stdin. Without the scheduled bypass this blocks.
+    let out = sb.run_with_input(&["clean", "--scheduled"], "");
+    assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("Quarantined"),
+        "scheduled mode should not have needed a prompt:\n{}",
+        stdout(&out)
+    );
+}
