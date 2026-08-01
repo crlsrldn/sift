@@ -98,16 +98,19 @@ fn config_is_validated_even_for_unimplemented_commands() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn every_prd_command_is_dispatchable() {
-    // Not-yet-implemented commands exit 64 with an explicit message. What must
-    // not happen is a command silently exiting 0 having done nothing.
+fn commands_not_yet_implemented_say_so_rather_than_exiting_zero() {
+    // What must not happen is a command silently exiting 0 having done nothing:
+    // indistinguishable from having run and found nothing.
+    //
+    // `doctor` is absent from this list because PR-08 implemented it. Each PR
+    // that lands a command removes it here, so the list is a live inventory of
+    // what remains rather than a stale copy of the plan.
     for cmd in [
         "scan",
         "clean",
         "purge",
         "restore",
         "report",
-        "doctor",
         "install",
         "uninstall",
     ] {
@@ -222,4 +225,73 @@ fn stdout_stays_pure_json_even_with_debug_logging() {
 
     serde_json::from_str::<serde_json::Value>(&String::from_utf8_lossy(&out.stdout))
         .expect("stdout was polluted by log output");
+}
+
+// ---------------------------------------------------------------------------
+// FR-26 / FR-27 — doctor
+// ---------------------------------------------------------------------------
+
+#[test]
+fn doctor_runs_and_exits_zero() {
+    // A machine missing an optional tool is not in an error state. doctor is a
+    // diagnostic; a non-zero exit would make it useless in a health check that
+    // only cares whether sift itself is broken.
+    let out = sift(&["doctor"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+
+    let text = stdout(&out);
+    for section in ["config", "volume", "full disk", "tools", "scanners"] {
+        assert!(
+            text.contains(section),
+            "missing `{section}` section:\n{text}"
+        );
+    }
+}
+
+#[test]
+fn doctor_reports_every_scanner() {
+    let out = sift(&["doctor"]);
+    let text = stdout(&out);
+    for id in sift_lib_scanner_ids() {
+        assert!(
+            text.contains(id),
+            "scanner `{id}` missing from doctor output"
+        );
+    }
+}
+
+fn sift_lib_scanner_ids() -> Vec<&'static str> {
+    sift::config::defaults::scanner_ids()
+}
+
+#[test]
+fn doctor_json_is_structurally_complete() {
+    let out = sift(&["doctor", "--json"]);
+    assert_eq!(code(&out), 0);
+
+    let v: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("not valid JSON");
+    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["scanners"].as_array().unwrap().len(), 17);
+    assert!(v["volume"]["is_apfs"].is_boolean());
+    assert!(v["full_disk_access"].is_string());
+}
+
+#[test]
+fn doctor_names_the_binary_in_fda_instructions_when_something_is_blocked() {
+    // FR-26's whole point: the remediation must name the sift binary, because
+    // granting FDA to Terminal silently does nothing for the scheduled agent.
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(bin())
+        .args(["doctor"])
+        .env("HOME", dir.path())
+        .env("XDG_CONFIG_HOME", "/nonexistent-sift-test-config")
+        .output()
+        .unwrap();
+
+    let text = String::from_utf8_lossy(&out.stdout);
+    if text.contains("blocked") {
+        assert!(text.contains("Full Disk Access"), "{text}");
+        assert!(text.contains("NOT to Terminal"), "{text}");
+        assert!(text.contains("sift"), "{text}");
+    }
 }

@@ -57,6 +57,14 @@ pub struct ScannerDefault {
     pub enabled: bool,
     /// Scanner-specific config keys this scanner accepts, beyond the common set.
     pub extra_keys: &'static [&'static str],
+    /// Whether this scanner needs Full Disk Access (spec §10 permissions matrix).
+    pub requires_fda: bool,
+    /// External tool without which this scanner cannot run at all. Absence
+    /// means "skip with a reason", never an error (FR-4, FR-27).
+    pub requires_tool: Option<&'static str>,
+    /// Tools that improve this scanner but are not required — sift delegates to
+    /// them when present and falls back to a native implementation otherwise.
+    pub optional_tools: &'static [&'static str],
 }
 
 /// The full scanner registry as far as *configuration* is concerned.
@@ -69,6 +77,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(7),
         risk: Risk::Destructive,
         enabled: false,
+        requires_fda: true,
+        requires_tool: Some("tmutil"),
+        optional_tools: &[],
         extra_keys: &["urgency"],
     },
     ScannerDefault {
@@ -76,6 +87,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(14),
         risk: Risk::Rebuildable,
         enabled: true,
+        requires_fda: false,
+        requires_tool: None,
+        optional_tools: &[],
         extra_keys: &[],
     },
     ScannerDefault {
@@ -83,6 +97,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(90),
         risk: Risk::Rebuildable,
         enabled: true,
+        requires_fda: false,
+        requires_tool: None,
+        optional_tools: &[],
         extra_keys: &[],
     },
     ScannerDefault {
@@ -90,6 +107,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(180),
         risk: Risk::Destructive,
         enabled: false,
+        requires_fda: false,
+        requires_tool: None,
+        optional_tools: &[],
         extra_keys: &[],
     },
     ScannerDefault {
@@ -97,6 +117,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: None,
         risk: Risk::Rebuildable,
         enabled: true,
+        requires_fda: false,
+        requires_tool: Some("xcrun"),
+        optional_tools: &[],
         extra_keys: &[],
     },
     ScannerDefault {
@@ -104,6 +127,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(30),
         risk: Risk::Rebuildable,
         enabled: true,
+        requires_fda: false,
+        requires_tool: None,
+        optional_tools: &["cargo-sweep"],
         extra_keys: &["prefer_delegation"],
     },
     ScannerDefault {
@@ -111,6 +137,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(60),
         risk: Risk::Safe,
         enabled: true,
+        requires_fda: false,
+        requires_tool: None,
+        optional_tools: &["cargo-cache"],
         extra_keys: &["prefer_delegation"],
     },
     ScannerDefault {
@@ -118,6 +147,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: None,
         risk: Risk::Safe,
         enabled: true,
+        requires_fda: false,
+        requires_tool: Some("brew"),
+        optional_tools: &[],
         extra_keys: &["autoremove"],
     },
     ScannerDefault {
@@ -125,6 +157,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: None,
         risk: Risk::Rebuildable,
         enabled: true,
+        requires_fda: false,
+        requires_tool: Some("docker"),
+        optional_tools: &[],
         extra_keys: &[],
     },
     ScannerDefault {
@@ -132,6 +167,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(60),
         risk: Risk::Safe,
         enabled: true,
+        requires_fda: false,
+        requires_tool: None,
+        optional_tools: &["pnpm", "yarn", "npm"],
         extra_keys: &[],
     },
     ScannerDefault {
@@ -139,6 +177,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(60),
         risk: Risk::Safe,
         enabled: true,
+        requires_fda: false,
+        requires_tool: None,
+        optional_tools: &["uv"],
         extra_keys: &[],
     },
     ScannerDefault {
@@ -146,6 +187,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(30),
         risk: Risk::Destructive,
         enabled: false,
+        requires_fda: true,
+        requires_tool: None,
+        optional_tools: &[],
         extra_keys: &[],
     },
     ScannerDefault {
@@ -153,6 +197,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(90),
         risk: Risk::Destructive,
         enabled: false,
+        requires_fda: false,
+        requires_tool: None,
+        optional_tools: &[],
         extra_keys: &[],
     },
     ScannerDefault {
@@ -160,6 +207,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(30),
         risk: Risk::Safe,
         enabled: true,
+        requires_fda: false,
+        requires_tool: None,
+        optional_tools: &[],
         extra_keys: &[],
     },
     ScannerDefault {
@@ -167,6 +217,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(365),
         risk: Risk::Destructive,
         enabled: false,
+        requires_fda: true,
+        requires_tool: None,
+        optional_tools: &[],
         extra_keys: &[],
     },
     ScannerDefault {
@@ -174,6 +227,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(90),
         risk: Risk::Safe,
         enabled: true,
+        requires_fda: true,
+        requires_tool: None,
+        optional_tools: &[],
         extra_keys: &[],
     },
     ScannerDefault {
@@ -181,6 +237,9 @@ pub const SCANNERS: &[ScannerDefault] = &[
         min_age_days: Some(30),
         risk: Risk::Safe,
         enabled: true,
+        requires_fda: false,
+        requires_tool: None,
+        optional_tools: &[],
         extra_keys: &[],
     },
 ];
