@@ -131,10 +131,21 @@ fn commands_not_yet_implemented_say_so_rather_than_exiting_zero() {
 #[test]
 fn no_arguments_behaves_as_scan() {
     // Principle 2: dry-run is the default.
+    //
+    // Compared line-by-line skipping the header, which carries a wall-clock
+    // duration that differs between two runs of the same command.
     let bare = sift(&[]);
     let scan = sift(&["scan"]);
     assert_eq!(code(&bare), code(&scan));
-    assert_eq!(stdout(&bare), stdout(&scan));
+
+    let body = |o: &Output| {
+        stdout(o)
+            .lines()
+            .skip(1)
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(body(&bare), body(&scan));
 }
 
 #[test]

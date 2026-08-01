@@ -1,0 +1,149 @@
+# Curated allowlist for S14 `app-caches`.
+#
+# Principle 1: allowlist, never blocklist. An unlisted bundle ID is NEVER
+# touched, regardless of size. There is no wildcard over ~/Library/Caches and
+# adding one would be a spec violation — the PRD rates blanket cache deletion
+# as a High-severity risk, and this file is the mitigation.
+#
+# Every entry must state:
+#   bundle_id     the directory name under ~/Library/Caches
+#   subpaths      specific subdirectories, or ["."] for the whole cache dir
+#   min_age_days  floor for this entry
+#   note          what regenerating actually costs the user
+#
+# The note is required and enforced by a test. If nobody can explain what is
+# lost, the entry does not belong here.
+
+# --- Browsers ---------------------------------------------------------------
+# HTTP and code caches only. Never Local Storage, IndexedDB, cookies, or
+# profile data — those are user state, not cache.
+
+[[entry]]
+bundle_id = "com.google.Chrome"
+subpaths = ["Default/Cache", "Default/Code Cache"]
+min_age_days = 14
+note = "Browser HTTP and compiled-JS cache; regenerates as you browse. Logins and history are untouched."
+
+[[entry]]
+bundle_id = "com.microsoft.edgemac"
+subpaths = ["Default/Cache", "Default/Code Cache"]
+min_age_days = 14
+note = "Browser HTTP and compiled-JS cache; regenerates as you browse."
+
+[[entry]]
+bundle_id = "com.brave.Browser"
+subpaths = ["Default/Cache", "Default/Code Cache"]
+min_age_days = 14
+note = "Browser HTTP and compiled-JS cache; regenerates as you browse."
+
+[[entry]]
+bundle_id = "org.mozilla.firefox"
+subpaths = ["cache2"]
+min_age_days = 14
+note = "Firefox network cache; regenerates as you browse."
+
+[[entry]]
+bundle_id = "company.thebrowser.Browser"
+subpaths = ["Default/Cache", "Default/Code Cache"]
+min_age_days = 14
+note = "Arc browser HTTP cache; regenerates as you browse."
+
+# --- Chat and communication -------------------------------------------------
+
+[[entry]]
+bundle_id = "com.tinyspeck.slackmacgap"
+subpaths = ["Cache", "Code Cache", "GPUCache"]
+min_age_days = 30
+note = "Slack's Electron cache. Message history lives on the server and is re-fetched; unsent drafts are stored separately."
+
+[[entry]]
+bundle_id = "com.hnc.Discord"
+subpaths = ["Cache", "Code Cache", "GPUCache"]
+min_age_days = 30
+note = "Discord's Electron cache; re-downloads assets on next launch."
+
+[[entry]]
+bundle_id = "com.microsoft.teams2"
+subpaths = ["Cache", "Code Cache"]
+min_age_days = 30
+note = "Teams Electron cache; re-downloads assets on next launch."
+
+# --- Media ------------------------------------------------------------------
+
+[[entry]]
+bundle_id = "com.spotify.client"
+subpaths = ["Data"]
+min_age_days = 30
+note = "Cached audio for streamed tracks. Downloaded-for-offline playlists are stored elsewhere and are not affected."
+
+# --- Developer tools --------------------------------------------------------
+
+[[entry]]
+bundle_id = "com.microsoft.VSCode"
+subpaths = ["Cache", "CachedData", "Code Cache"]
+min_age_days = 30
+note = "VS Code's cached extension and startup data; rebuilt on next launch. Settings and extensions are untouched."
+
+[[entry]]
+bundle_id = "com.jetbrains.intellij"
+subpaths = ["caches"]
+min_age_days = 60
+note = "IntelliJ index caches. Reindexing a large project takes minutes on next open."
+
+[[entry]]
+bundle_id = "com.docker.docker"
+subpaths = ["Cache"]
+min_age_days = 30
+note = "Docker Desktop UI cache only. Images and volumes are managed by the `containers` scanner and are not touched here."
+
+[[entry]]
+bundle_id = "com.apple.dt.Xcode"
+subpaths = ["."]
+min_age_days = 30
+note = "Xcode's own cache directory; rebuilt as needed. DerivedData is handled by the `xcode-derived` scanner."
+
+# --- Package managers -------------------------------------------------------
+
+[[entry]]
+bundle_id = "Homebrew"
+subpaths = ["downloads"]
+min_age_days = 30
+note = "Downloaded bottle archives; re-fetched on next install. `brew cleanup` handles this too."
+
+[[entry]]
+bundle_id = "pip"
+subpaths = ["."]
+min_age_days = 60
+note = "pip's HTTP wheel cache; re-downloaded on next install."
+
+[[entry]]
+bundle_id = "go-build"
+subpaths = ["."]
+min_age_days = 30
+note = "Go build cache; rebuilt on next `go build`, at the cost of one slow compile."
+
+[[entry]]
+bundle_id = "typescript"
+subpaths = ["."]
+min_age_days = 60
+note = "TypeScript compiler cache; regenerates on next type-check."
+
+# --- Miscellaneous ----------------------------------------------------------
+
+[[entry]]
+bundle_id = "com.apple.helpd"
+subpaths = ["."]
+min_age_days = 90
+note = "macOS Help viewer cache; regenerates when Help is opened."
+
+[[entry]]
+bundle_id = "com.electron.figma"
+subpaths = ["Cache", "Code Cache"]
+min_age_days = 30
+note = "Figma desktop cache; files live in the cloud and are re-fetched."
+
+[[entry]]
+bundle_id = "com.postmanlabs.mac"
+subpaths = ["Cache", "Code Cache"]
+min_age_days = 30
+note = "Postman Electron cache; collections and environments are stored separately."
