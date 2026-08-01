@@ -128,7 +128,17 @@ fn every_fda_requiring_scanner_that_is_enabled_is_reported_blocked() {
         assert!(line.contains("Full Disk Access"), "{line}");
     }
 
-    assert!(out.contains("4 scanner(s) blocked"), "{out}");
+    // Asserted on the FDA line, not the total blocked count. The total also
+    // includes scanners blocked by a MISSING TOOL, which varies by host — the
+    // CI runner has no Docker, so it reports 5 where this machine reports 4.
+    // A count assertion would be testing the host, not the code.
+    let fda_line = out
+        .lines()
+        .find(|l| l.contains("Full Disk Access — blocks:"))
+        .unwrap_or_else(|| panic!("no grouped FDA remediation line:\n{out}"));
+    for id in ["snapshots", "trash", "ios-backups", "mail-downloads"] {
+        assert!(fda_line.contains(id), "`{id}` missing from: {fda_line}");
+    }
 }
 
 #[test]
@@ -149,8 +159,20 @@ fn a_disabled_scanner_is_reported_disabled_rather_than_blocked() {
         );
     }
 
-    // Only mail-downloads is on by default and needs FDA.
-    assert!(out.contains("1 scanner(s) blocked"), "{out}");
+    // Only mail-downloads is on by default and needs FDA. Asserted on the FDA
+    // line rather than the total, which also counts missing-tool blocks and so
+    // varies by host.
+    let fda_line = out
+        .lines()
+        .find(|l| l.contains("Full Disk Access — blocks:"))
+        .unwrap_or_else(|| panic!("no grouped FDA remediation line:\n{out}"));
+    assert!(fda_line.contains("mail-downloads"), "{fda_line}");
+    for id in ["snapshots", "trash", "ios-backups"] {
+        assert!(
+            !fda_line.contains(id),
+            "a disabled scanner appeared in the FDA remediation: {fda_line}"
+        );
+    }
 }
 
 #[test]
