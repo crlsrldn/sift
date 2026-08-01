@@ -8,6 +8,7 @@
 //! target.
 
 pub mod action;
+pub mod agent;
 pub mod caps;
 pub mod cli;
 pub mod commands;
