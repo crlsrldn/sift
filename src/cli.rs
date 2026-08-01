@@ -79,7 +79,7 @@ pub enum Command {
     Doctor,
 
     /// Install the scheduled LaunchAgent.
-    Install,
+    Install(InstallArgs),
 
     /// Remove the LaunchAgent, purge quarantine, and clean up.
     Uninstall,
@@ -142,6 +142,16 @@ pub struct PurgeArgs {
     /// Skip the confirmation prompt.
     #[arg(long)]
     pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct InstallArgs {
+    /// Show the plist and the launchctl command, and do neither.
+    ///
+    /// `install` loads a job into your launchd session, which persists across
+    /// reboots. This shows exactly what that would be first.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, Args)]

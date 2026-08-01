@@ -98,19 +98,16 @@ fn config_is_validated_even_for_unimplemented_commands() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn commands_not_yet_implemented_say_so_rather_than_exiting_zero() {
-    // What must not happen is a command silently exiting 0 having done nothing:
-    // indistinguishable from having run and found nothing.
-    //
-    // Implemented and therefore absent: `doctor` (PR-08), `scan` (PR-09),
-    // `report` (PR-17), `purge` (PR-20), `restore` (PR-21), `clean` (PR-22). Each PR that lands a command removes it here, so the list is
-    // a live inventory of what remains rather than a stale copy of the plan.
-    for cmd in ["install", "uninstall"] {
-        let out = sift(&[cmd]);
-        assert_ne!(code(&out), 0, "`{cmd}` exited 0 without being implemented");
-        assert!(
-            stderr(&out).contains("not implemented"),
-            "`{cmd}` should say it is unimplemented, got: {}",
+fn every_prd_command_is_implemented() {
+    // The not-implemented inventory is empty: every command in PRD §7 now does
+    // something. `install` and `uninstall` are excluded from the invocation
+    // check because running them would alter this machine's launchd state.
+    for cmd in ["scan", "clean", "purge", "restore", "report", "doctor"] {
+        let out = sift(&[cmd, "--help"]);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "`{cmd} --help` failed: {}",
             stderr(&out)
         );
     }
