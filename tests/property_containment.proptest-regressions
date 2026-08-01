@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 38aec87d2ee74d3e8e051a37ae43ac7bc2b3dcabd4f2c9c81eb9c8849239dfe4 # shrinks to paths = [["Documents"]], seed = 0, max_risk = "safe", min_age = 0, roots = false, window = 0
