@@ -208,10 +208,15 @@ proptest! {
 
         let mut violations: Vec<(String, PathBuf)> = Vec::new();
         for c in &filtered.accepted {
-            if let Target::Path(p) = &c.target {
-                if !is_declared(&home, p) {
-                    violations.push((c.scanner.to_string(), p.clone()));
-                }
+            // Both path-bearing target kinds. Matching only `Target::Path`
+            // would excuse `HardDelete` — the irreversible one — from the
+            // containment property entirely.
+            let claimed = match &c.target {
+                Target::Path(p) | Target::HardDelete(p) => p,
+                Target::Delegated(_) | Target::Snapshot(_) => continue,
+            };
+            if !is_declared(&home, claimed) {
+                violations.push((c.scanner.to_string(), claimed.clone()));
             }
         }
 

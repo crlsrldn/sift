@@ -9,6 +9,21 @@
 //! candidate set rather than checking a list of known-bad paths, so a scanner
 //! added later that reaches somewhere new fails here without anyone having to
 //! remember to extend it.
+//!
+//! # Two corrections, made when the destructive scanners landed
+//!
+//! **The corpus grants FDA.** Overriding `$HOME` made the FDA probe return
+//! `Unknown`, so `trash`, `snapshots`, and `ios-backups` were skipped and never
+//! ran against the corpus at all — the three most dangerous scanners in the
+//! tool were passing this gate vacuously. The fixture now creates a readable
+//! TCC directory so they actually execute, and asserts they are not skipped.
+//!
+//! **Trash and backups are not in the corpus.** They were, and that was wrong:
+//! if a user arms `trash`, claiming Trash contents is the scanner working, not
+//! failing. The corpus is for things no scanner may claim *however it is
+//! configured*. What belongs here instead is a document in `~/Downloads` — the
+//! directory S13 does operate on, where only four extensions are ever
+//! eligible.
 
 use sift::caps::Capabilities;
 use sift::config::Config;
@@ -58,12 +73,14 @@ const NEVER_TOUCH: &[(&str, &str)] = &[
     (".rustup/toolchains/stable/bin/rustc", "Rust toolchain"),
     (".cargo/bin/cargo-nextest", "cargo-installed binary"),
     (".cargo/env", "cargo environment script"),
-    // Time Machine and backups.
-    (".Trash/recently-deleted.txt", "Trash contents"),
-    (
-        "Library/Application Support/MobileSync/Backup/x/Info.plist",
-        "iOS backup",
-    ),
+    // Documents sitting in Downloads. S13 operates on this directory, and only
+    // four installer extensions are ever eligible — everything else here must
+    // survive at any age.
+    ("Downloads/thesis-final.pdf", "document in Downloads"),
+    ("Downloads/contract-signed.docx", "document in Downloads"),
+    ("Downloads/family-photos.heic", "photo in Downloads"),
+    ("Downloads/recording.mov", "video in Downloads"),
+    ("Downloads/dataset.csv", "data file in Downloads"),
     // Application state that looks like cache but is not.
     (
         "Library/Caches/com.google.Chrome/Default/Cookies",
@@ -89,6 +106,11 @@ impl Corpus {
         let home = dir.path().to_path_buf();
         let prev_home = std::env::var_os("HOME");
         std::env::set_var("HOME", &home);
+
+        // Grant FDA to the probe. Without this the fixture's own $HOME override
+        // makes `probe_fda` see ENOENT -> Unknown, and every FDA-requiring
+        // scanner is skipped before it ever looks at the corpus.
+        fs::create_dir_all(home.join("Library/Application Support/com.apple.TCC")).unwrap();
 
         for (rel, _) in NEVER_TOUCH {
             let p = home.join(rel);
@@ -167,8 +189,17 @@ fn age(path: &Path, days: i64) {
 /// directory would otherwise slip through a leaf-only check.
 fn assert_corpus_untouched(home: &Path, candidates: &[sift::scan::Candidate]) {
     for c in candidates {
-        let sift::scan::Target::Path(claimed) = &c.target else {
-            continue;
+        // EVERY path-bearing target, not just Path.
+        //
+        // This originally matched `Target::Path` alone, which silently excused
+        // every `HardDelete` candidate — the one target kind that cannot be
+        // undone. `trash` was invisible to this gate. Verified by sabotage:
+        // pointing trash at ~/Documents did not fail the corpus until this was
+        // fixed.
+        let claimed = match &c.target {
+            sift::scan::Target::Path(p) => p,
+            sift::scan::Target::HardDelete(p) => p,
+            sift::scan::Target::Delegated(_) | sift::scan::Target::Snapshot(_) => continue,
         };
         for (rel, why) in NEVER_TOUCH {
             let protected = home.join(rel);
@@ -193,6 +224,42 @@ fn no_scanner_claims_anything_in_the_never_touch_corpus() {
 
     let report = sift::scan::registry().run(&ctx, None);
     assert_corpus_untouched(&corpus.home, &report.candidates);
+}
+
+#[test]
+fn the_destructive_scanners_actually_run_against_the_corpus() {
+    // Guards the hole this test had until the destructive scanners landed: the
+    // $HOME override made the FDA probe return Unknown, so trash, snapshots,
+    // and ios-backups were SKIPPED and the corpus never exercised them. The
+    // gate was green and proving nothing about the three scanners that can do
+    // the most damage.
+    let corpus = Corpus::new();
+    let ctx = corpus.ctx(corpus.maximally_dangerous_config());
+    let report = sift::scan::registry().run(&ctx, None);
+
+    for id in [
+        "trash",
+        "snapshots",
+        "ios-backups",
+        "downloads",
+        "xcode-archives",
+    ] {
+        let skipped_for_capability = report.skipped.iter().any(|(s, why)| {
+            *s == id
+                && matches!(
+                    why,
+                    sift::scan::SkippedScanner::NeedsFda
+                        | sift::scan::SkippedScanner::NeedsTool(_)
+                        | sift::scan::SkippedScanner::Disabled
+                        | sift::scan::SkippedScanner::RiskGated { .. }
+                )
+        });
+        assert!(
+            !skipped_for_capability,
+            "`{id}` never ran against the corpus, so its assertions prove nothing:\n{:?}",
+            report.skipped
+        );
+    }
 }
 
 #[test]
