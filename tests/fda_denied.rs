@@ -7,11 +7,21 @@
 //! errno genuinely, by making the directory mode 000 — the same `EACCES` a real
 //! TCC denial delivers to the same call.
 //!
-//! What they do **not** prove is that macOS TCC actually denies that path with
-//! that errno on every OS version. Only revoking Full Disk Access for real
-//! proves that, and it cannot be done from a test. Until someone does it by
-//! hand, treat "TCC denies read_dir with EACCES" as the assumption this rests
-//! on — everything downstream of it is covered here.
+//! # The assumption, and its verification
+//!
+//! These rest on "TCC denies `read_dir` of the TCC directory with `EACCES`".
+//! That cannot be proven from a test — it needs Full Disk Access actually
+//! revoked, which no automated run can do.
+//!
+//! **Verified by hand on macOS 26.5.2 (arm64), 2026-08-01.** With FDA revoked
+//! from the terminal and the process restarted, `sift doctor` reported
+//! `full disk   DENIED — some scanners cannot run` and blocked
+//! `mail-downloads` — output character-identical to what the mode-000 fixture
+//! below produces. The fixture is faithful, and the probe method from spec §10
+//! is sound on this OS version.
+//!
+//! Re-verify if the probe path or method in `caps::probe_fda` changes, or on a
+//! materially newer macOS. The steps are in `docs/` and take about two minutes.
 //!
 //! This exists because the denied path *is* the first-run experience for every
 //! user who installs sift, and it was previously exercised only by pointing
