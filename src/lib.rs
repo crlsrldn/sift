@@ -16,6 +16,7 @@ pub mod error;
 pub mod fs;
 pub mod logging;
 pub mod paths;
+pub mod report;
 pub mod risk;
 pub mod scan;
 
