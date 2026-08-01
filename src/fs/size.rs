@@ -121,17 +121,13 @@ impl Measurer {
     }
 }
 
-/// Measure an already-walked tree.
+/// Measure an already-collected walk. For tests; prefer [`measure_with`].
 pub fn measure_result(result: &WalkResult) -> Measurement {
     let mut m = Measurer::new();
     for entry in &result.entries {
         m.add(&entry.metadata);
     }
     let mut out = m.finish();
-
-    // The walker refuses dataless entries before they reach `entries`, so pick
-    // up its count too. Otherwise the two paths disagree about how many were
-    // seen depending on which layer noticed first.
     out.dataless_files += result.count_skipped(SkipReason::Dataless) as u64;
     out
 }
@@ -139,15 +135,40 @@ pub fn measure_result(result: &WalkResult) -> Measurement {
 /// Walk and measure a tree in one step.
 pub fn measure(path: &Path) -> Result<Measurement> {
     let walker = Walker::new(path)?;
-    let result = walker.walk(path)?;
-    Ok(measure_result(&result))
+    measure_with(&walker, path)
 }
 
 /// Measure using a caller-supplied walker, so scanner excludes and depth caps
 /// apply to the measurement as well as the search.
+///
+/// Streams: peak memory is independent of file count. The dedup set is the only
+/// thing that grows, and only for files with more than one link, which is a
+/// small minority on any real tree.
 pub fn measure_with(walker: &Walker, path: &Path) -> Result<Measurement> {
-    let result = walker.walk(path)?;
-    Ok(measure_result(&result))
+    let mut m = Measurer::new();
+    let summary = walker.visit(path, |_, meta, _| m.add(meta))?;
+    let mut out = m.finish();
+    // The walker refuses dataless entries before the visitor sees them, so pick
+    // up its count too. Otherwise the two paths disagree about how many were
+    // seen depending on which layer noticed first.
+    out.dataless_files += summary.count_skipped(SkipReason::Dataless);
+    Ok(out)
+}
+
+/// Measure and report the newest mtime in one traversal.
+///
+/// Scanners need both — the size to report and the newest write for the
+/// liveness guard — and walking twice doubles the cost of the most expensive
+/// thing sift does.
+pub fn measure_and_newest(
+    walker: &Walker,
+    path: &Path,
+) -> Result<(Measurement, Option<std::time::SystemTime>)> {
+    let mut m = Measurer::new();
+    let summary = walker.visit(path, |_, meta, _| m.add(meta))?;
+    let mut out = m.finish();
+    out.dataless_files += summary.count_skipped(SkipReason::Dataless);
+    Ok((out, summary.newest_mtime))
 }
 
 #[cfg(test)]

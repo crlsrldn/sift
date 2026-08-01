@@ -51,11 +51,11 @@ fn newest_write(ctx: &ScanCtx, path: &std::path::Path) -> Option<DateTime<Local>
         .and_then(|m| m.modified().ok())
         .map(DateTime::<Local>::from);
 
-    let walker = ctx.walker();
-    let within = walker
-        .walk(path)
+    let within = ctx
+        .walker()
+        .newest_mtime(path)
         .ok()
-        .and_then(|r| r.newest_mtime())
+        .flatten()
         .map(DateTime::<Local>::from);
 
     match (own, within) {
