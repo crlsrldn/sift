@@ -103,9 +103,9 @@ fn commands_not_yet_implemented_say_so_rather_than_exiting_zero() {
     // indistinguishable from having run and found nothing.
     //
     // Implemented and therefore absent: `doctor` (PR-08), `scan` (PR-09),
-    // `report` (PR-17), `purge` (PR-20), `restore` (PR-21). Each PR that lands a command removes it here, so the list is
+    // `report` (PR-17), `purge` (PR-20), `restore` (PR-21), `clean` (PR-22). Each PR that lands a command removes it here, so the list is
     // a live inventory of what remains rather than a stale copy of the plan.
-    for cmd in ["clean", "install", "uninstall"] {
+    for cmd in ["install", "uninstall"] {
         let out = sift(&[cmd]);
         assert_ne!(code(&out), 0, "`{cmd}` exited 0 without being implemented");
         assert!(
