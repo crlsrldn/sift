@@ -55,14 +55,13 @@ impl Scanner for Logs {
                 // Per-subdirectory rather than the whole Logs tree, so one
                 // recently-active app's logs do not protect everything else.
                 let (modified, m) = if meta.is_dir() {
-                    let walker = ctx.walker();
-                    let Ok(result) = walker.walk(&path) else {
+                    let Ok((m, newest_raw)) = size::measure_and_newest(&ctx.walker(), &path) else {
                         continue;
                     };
-                    let Some(newest) = result.newest_mtime().map(DateTime::<Local>::from) else {
+                    let Some(newest) = newest_raw.map(DateTime::<Local>::from) else {
                         continue;
                     };
-                    (newest, size::measure_result(&result))
+                    (newest, m)
                 } else {
                     let Some(t) = meta.modified().ok().map(DateTime::<Local>::from) else {
                         continue;

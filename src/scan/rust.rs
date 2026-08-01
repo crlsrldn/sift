@@ -157,11 +157,12 @@ fn find_targets(ctx: &ScanCtx, dir: &Path, min_age: i64, depth: usize, out: &mut
                 continue;
             }
 
-            let walker = ctx.walker();
-            let Ok(result) = walker.walk(&path) else {
+            // One traversal for both the size and the newest write; walking
+            // twice doubles the cost of the most expensive thing sift does.
+            let Ok((m, newest_raw)) = size::measure_and_newest(&ctx.walker(), &path) else {
                 continue;
             };
-            let Some(newest) = result.newest_mtime().map(DateTime::<Local>::from) else {
+            let Some(newest) = newest_raw.map(DateTime::<Local>::from) else {
                 continue;
             };
             let age = ctx.age_days(newest);
@@ -169,7 +170,6 @@ fn find_targets(ctx: &ScanCtx, dir: &Path, min_age: i64, depth: usize, out: &mut
                 continue;
             }
 
-            let m = size::measure_result(&result);
             if m.bytes_on_disk == 0 {
                 continue;
             }

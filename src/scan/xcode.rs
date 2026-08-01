@@ -32,9 +32,11 @@ fn mtime(meta: &std::fs::Metadata) -> Option<DateTime<Local>> {
 /// is rewritten, so trusting it would let sift quarantine a build that is
 /// actively running.
 fn newest_mtime_within(ctx: &ScanCtx, path: &Path) -> Option<DateTime<Local>> {
-    let walker = ctx.walker();
-    let result = walker.walk(path).ok()?;
-    result.newest_mtime().map(DateTime::<Local>::from)
+    ctx.walker()
+        .newest_mtime(path)
+        .ok()
+        .flatten()
+        .map(DateTime::<Local>::from)
 }
 
 /// Whether anything in the tree was touched inside the liveness window (FR-17).
