@@ -8,7 +8,7 @@
 use crate::caps::Capabilities;
 use crate::config::Config;
 use crate::fs::volume;
-use crate::report::{human, json};
+use crate::report::{history, human, json};
 use crate::scan::{only_filter, ScanCtx};
 use crate::{Result, SiftError};
 use std::sync::Arc;
@@ -31,6 +31,14 @@ pub fn run(cfg: &Config, only: Option<&str>, json_out: bool) -> Result<()> {
         );
     } else {
         print!("{}", human::render(&report, &ctx));
+    }
+
+    // FR-8: every run appends a structured record, including a pure scan. The
+    // trend in `sift report` is only meaningful if scans are recorded too, not
+    // just runs that deleted something. A history write failure must not fail
+    // the run — the report the user asked for was already produced.
+    if let Err(e) = history::append(&history::RunRecord::from_scan(&report, &ctx, "scan")) {
+        tracing::warn!(error = %e, "could not append to run history");
     }
 
     // Exit 5 when any scanner failed (spec §11). The run still produced a

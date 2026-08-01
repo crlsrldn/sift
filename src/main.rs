@@ -6,7 +6,7 @@
 
 use clap::Parser;
 use sift::cli::{Cli, Command, ConfigCommand, GlobalArgs};
-use sift::commands::{config_check, doctor, not_implemented, scan};
+use sift::commands::{config_check, doctor, not_implemented, report, scan};
 use sift::config::Config;
 use sift::logging::{self, LogFormat};
 use sift::{ExitCode, Result};
@@ -62,7 +62,7 @@ fn run(command: Command, global: &GlobalArgs) -> Result<()> {
         Command::Clean(_) => not_implemented("clean", "PR-22"),
         Command::Purge(_) => not_implemented("purge", "PR-20"),
         Command::Restore(_) => not_implemented("restore", "PR-21"),
-        Command::Report(_) => not_implemented("report", "PR-17"),
+        Command::Report(a) => report::run(a.days, global.json),
         Command::Doctor => doctor::run(&config, global.json),
         Command::Install => not_implemented("install", "PR-34"),
         Command::Uninstall => not_implemented("uninstall", "PR-34"),

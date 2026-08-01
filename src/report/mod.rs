@@ -2,5 +2,7 @@
 //! history.
 
 pub mod group;
+pub mod history;
 pub mod human;
 pub mod json;
+pub mod trend;
