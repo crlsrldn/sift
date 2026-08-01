@@ -57,6 +57,7 @@ objc2-foundation = { version = "0.3", features = [
 #   mandates in §8 and §11. Path resolution is hand-rolled in src/paths.rs (PR-03).
 
 [dev-dependencies]
+filetime = "0.2.29"
 tempfile = "3"
 
 [profile.release]
