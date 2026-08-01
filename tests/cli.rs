@@ -102,16 +102,11 @@ fn commands_not_yet_implemented_say_so_rather_than_exiting_zero() {
     // What must not happen is a command silently exiting 0 having done nothing:
     // indistinguishable from having run and found nothing.
     //
-    // `doctor` (PR-08), `scan` (PR-09), and `report` (PR-17) are absent because
-    // they are implemented. Each PR that lands a command removes it here, so the list is
+    // Implemented and therefore absent: `doctor` (PR-08), `scan` (PR-09),
+    // `report` (PR-17), `purge` (PR-20), `restore` (PR-21). Each PR that lands a command removes it here, so the list is
     // a live inventory of what remains rather than a stale copy of the plan.
-    for cmd in ["clean", "purge", "restore", "install", "uninstall"] {
-        let args: Vec<&str> = if cmd == "restore" {
-            vec![cmd, "0192abc"]
-        } else {
-            vec![cmd]
-        };
-        let out = sift(&args);
+    for cmd in ["clean", "install", "uninstall"] {
+        let out = sift(&[cmd]);
         assert_ne!(code(&out), 0, "`{cmd}` exited 0 without being implemented");
         assert!(
             stderr(&out).contains("not implemented"),
