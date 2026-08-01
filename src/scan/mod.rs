@@ -373,13 +373,17 @@ fn run_one(s: &dyn Scanner, ctx: &ScanCtx) -> Outcome {
     }
 }
 
+pub mod xcode;
+
 /// The production registry.
 ///
-/// Empty until PR-12. Scanners are registered by their implementing PR, so this
-/// list is an accurate inventory of what actually works rather than an
-/// aspiration.
+/// Scanners are registered by their implementing PR, so this list is an
+/// accurate inventory of what actually works rather than an aspiration.
 pub fn registry() -> Registry {
     Registry::new()
+        .with(Box::new(xcode::DerivedData)) // S2
+        .with(Box::new(xcode::DeviceSupport)) // S3
+        .with(Box::new(xcode::Archives)) // S4 — Destructive, gated by max_risk
 }
 
 /// Compile a `--only` glob into a set matching scanner ids.
