@@ -13,13 +13,19 @@ use crate::scan::{only_filter, ScanCtx};
 use crate::{Result, SiftError};
 use std::sync::Arc;
 
-pub fn run(cfg: &Config, only: Option<&str>, json_out: bool) -> Result<()> {
+pub fn run(
+    cfg: &Config,
+    only: Option<&str>,
+    estimate_delegated: bool,
+    json_out: bool,
+) -> Result<()> {
     let filter = only.map(only_filter).transpose()?;
     let ctx = ScanCtx::new(
         Arc::new(cfg.clone()),
         volume::root()?,
         Capabilities::probe(),
-    )?;
+    )?
+    .with_delegated_estimates(estimate_delegated);
 
     let registry = crate::scan::registry();
     let report = registry.run(&ctx, filter.as_ref());

@@ -39,6 +39,14 @@ pub struct ScanCtx {
     pub root_volume: VolumeInfo,
     pub caps: Capabilities,
     pub excludes: GlobSet,
+    /// Whether delegated scanners may spawn their tool to size a candidate.
+    ///
+    /// **Off by default, and that default is load-bearing.** Sizing means
+    /// running `brew cleanup --dry-run` and `docker system df`, which costs
+    /// ~4 seconds against M4's 15-second budget for a whole volume, and lets
+    /// those tools create their own cache directories — a side effect FR-1
+    /// forbids. `--estimate-delegated` opts into both costs knowingly.
+    pub estimate_delegated: bool,
 }
 
 impl ScanCtx {
@@ -54,7 +62,14 @@ impl ScanCtx {
             root_volume,
             caps,
             excludes,
+            estimate_delegated: false,
         })
+    }
+
+    /// Opt into spawning delegated tools for size estimates.
+    pub fn with_delegated_estimates(mut self, yes: bool) -> Self {
+        self.estimate_delegated = yes;
+        self
     }
 
     /// Age in days of something last modified at `t`.

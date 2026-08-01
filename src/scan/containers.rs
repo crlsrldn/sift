@@ -45,10 +45,14 @@ impl Scanner for Containers {
     }
 
     fn scan(&self, ctx: &ScanCtx) -> Result<Vec<Candidate>, ScannerError> {
-        // No subprocess here — not `docker info`, not `docker system df`. See
-        // the module docs. A prune against an unreachable daemon fails
-        // harmlessly and is recorded as a scanner error (FR-2).
-        let reclaimable = 0u64;
+        // Spawns only under --estimate-delegated. A prune against an
+        // unreachable daemon fails harmlessly and is recorded as a scanner
+        // error (FR-2), so no `docker info` check is needed either.
+        let reclaimable = if ctx.estimate_delegated {
+            reclaimable_bytes()
+        } else {
+            0
+        };
 
         let mut cmds = vec![
             (
@@ -103,6 +107,46 @@ impl Scanner for Containers {
 /// this Docker accepts would risk the command failing outright.
 fn builder_prune_command() -> DelegatedCmd {
     DelegatedCmd::new("docker", &["builder", "prune", "-f"])
+}
+
+/// Reclaimable bytes from `docker system df`. Only called under
+/// `--estimate-delegated`; returns 0 on anything unparseable rather than
+/// estimating.
+fn reclaimable_bytes() -> u64 {
+    let out = crate::action::delegate::probe(
+        "docker",
+        &["system", "df", "--format", "{{.Type}}\t{{.Reclaimable}}"],
+        std::time::Duration::from_secs(30),
+    );
+    let crate::action::delegate::Outcome::Ok { stdout, .. } = out else {
+        return 0;
+    };
+    stdout
+        .lines()
+        .filter_map(|l| l.split('\t').nth(1))
+        .filter_map(parse_docker_size)
+        .sum()
+}
+
+/// Parse Docker's size strings: `1.2GB`, `512MB`, `0B`, `1.2GB (45%)`.
+fn parse_docker_size(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let s = s.split('(').next().unwrap_or(s).trim();
+    for (suffix, mult) in [
+        ("TB", 1_000_000_000_000f64),
+        ("GB", 1_000_000_000.0),
+        ("MB", 1_000_000.0),
+        ("kB", 1_000.0),
+        ("KB", 1_000.0),
+        ("B", 1.0),
+    ] {
+        if let Some(num) = s.strip_suffix(suffix) {
+            if let Ok(v) = num.trim().parse::<f64>() {
+                return Some((v * mult) as u64);
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -173,6 +217,15 @@ mod tests {
                 cmd.display()
             );
         }
+    }
+
+    #[test]
+    fn docker_size_strings_parse() {
+        assert_eq!(parse_docker_size("1.2GB"), Some(1_200_000_000));
+        assert_eq!(parse_docker_size("512MB"), Some(512_000_000));
+        assert_eq!(parse_docker_size("0B"), Some(0));
+        assert_eq!(parse_docker_size("1.5GB (45%)"), Some(1_500_000_000));
+        assert_eq!(parse_docker_size("garbage"), None);
     }
 
     #[test]

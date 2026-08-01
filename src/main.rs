@@ -58,12 +58,18 @@ fn run(command: Command, global: &GlobalArgs) -> Result<()> {
     match command {
         Command::Config(ConfigCommand::Check) => config_check::run(&config, global.json),
 
-        Command::Scan(a) => scan::run(&config, a.only.as_deref(), global.json),
+        Command::Scan(a) => scan::run(
+            &config,
+            a.only.as_deref(),
+            a.estimate_delegated,
+            global.json,
+        ),
         Command::Clean(a) => clean::run(
             &config,
             a.only.as_deref(),
             a.dry_run,
             a.yes,
+            a.estimate_delegated,
             global.scheduled,
             global.json,
         ),

@@ -12,7 +12,7 @@
 
 use crate::fs::size;
 use crate::risk::Risk;
-use crate::scan::{Candidate, ScanCtx, Scanner, Target};
+use crate::scan::{Candidate, DelegatedCmd, ScanCtx, Scanner, Target};
 use crate::ScannerError;
 use chrono::{DateTime, Local};
 use std::path::{Path, PathBuf};
@@ -61,6 +61,50 @@ impl Scanner for Targets {
 
         let cfg = ctx.config.scanner(self.id());
         let min_age = cfg.and_then(|c| c.min_age_days).unwrap_or(30) as i64;
+
+        // PRD Open Question 3, resolved: prefer cargo-sweep when it is
+        // installed. It solves this problem correctly and is maintained, and
+        // Principle 5 says delegate to the owner tool.
+        //
+        // The escape hatch matters. Delegation bypasses quarantine (FR-15), so
+        // a user who wants the reversible path can force the native
+        // implementation with `prefer_delegation = false`.
+        let prefer_delegation = cfg.and_then(|c| c.prefer_delegation).unwrap_or(true);
+        if prefer_delegation && crate::caps::which("cargo-sweep").is_some() {
+            return Ok(ctx
+                .config
+                .projects
+                .roots
+                .iter()
+                .filter(|r| r.is_dir())
+                .map(|root| Candidate {
+                    scanner: self.id(),
+                    target: Target::Delegated(DelegatedCmd::new(
+                        "cargo-sweep",
+                        &[
+                            "sweep",
+                            "--time",
+                            &min_age.to_string(),
+                            "--recursive",
+                            &root.to_string_lossy(),
+                        ],
+                    )),
+                    bytes_on_disk: 0,
+                    bytes_apparent: 0,
+                    last_modified: ctx.now,
+                    risk: Risk::Rebuildable,
+                    label: format!("target/ under {} (via cargo-sweep)", root.display()),
+                    // The user must never have to guess whether their cleanup
+                    // was reversible.
+                    reason: format!(
+                        "cargo-sweep --time {min_age} --recursive. NOT reversible: \
+                         delegated commands bypass quarantine. Set \
+                         `[scanners.rust-targets] prefer_delegation = false` for the \
+                         native, undoable path"
+                    ),
+                })
+                .collect());
+        }
 
         let mut out = Vec::new();
         for root in &ctx.config.projects.roots {
@@ -193,6 +237,24 @@ impl Scanner for CargoCache {
         let cfg = ctx.config.scanner(self.id());
         let min_age = cfg.and_then(|c| c.min_age_days).unwrap_or(60) as i64;
 
+        // Same preference, same escape hatch (PRD Open Question 3).
+        let prefer_delegation = cfg.and_then(|c| c.prefer_delegation).unwrap_or(true);
+        if prefer_delegation && crate::caps::which("cargo-cache").is_some() {
+            return Ok(vec![Candidate {
+                scanner: self.id(),
+                target: Target::Delegated(DelegatedCmd::new("cargo-cache", &["--autoclean"])),
+                bytes_on_disk: 0,
+                bytes_apparent: 0,
+                last_modified: ctx.now,
+                risk: Risk::Safe,
+                label: "Cargo caches (via cargo-cache)".into(),
+                reason: "cargo cache --autoclean. NOT reversible: delegated commands \
+                         bypass quarantine. Set `[scanners.cargo-cache] \
+                         prefer_delegation = false` for the native, undoable path"
+                    .into(),
+            }]);
+        }
+
         let mut out = Vec::new();
         for (sub, why) in CARGO_CACHE_SUBPATHS {
             let path = cargo.join(sub);
@@ -272,6 +334,39 @@ mod tests {
         )));
         assert!(!is_protected(Path::new("/Users/x/dev/bin")));
         assert!(!is_protected(Path::new("/Users/x/rustup-notes")));
+    }
+
+    #[test]
+    fn the_delegated_commands_are_the_ones_the_spec_names() {
+        // spec §6 S6 and S7.
+        assert_eq!(
+            DelegatedCmd::new(
+                "cargo-sweep",
+                &["sweep", "--time", "30", "--recursive", "/x"]
+            )
+            .display(),
+            "cargo-sweep sweep --time 30 --recursive /x"
+        );
+        assert_eq!(
+            DelegatedCmd::new("cargo-cache", &["--autoclean"]).display(),
+            "cargo-cache --autoclean"
+        );
+    }
+
+    #[test]
+    fn delegation_is_preferred_by_default_but_overridable() {
+        // Delegation bypasses quarantine (FR-15), so a user who wants the
+        // reversible path must be able to insist on it.
+        let on = crate::config::Config::parse("").unwrap();
+        assert_eq!(on.scanner("rust-targets").unwrap().prefer_delegation, None);
+
+        let off =
+            crate::config::Config::parse("[scanners.rust-targets]\nprefer_delegation = false\n")
+                .unwrap();
+        assert_eq!(
+            off.scanner("rust-targets").unwrap().prefer_delegation,
+            Some(false)
+        );
     }
 
     #[test]
