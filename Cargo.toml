@@ -58,6 +58,7 @@ objc2-foundation = { version = "0.3", features = [
 
 [dev-dependencies]
 filetime = "0.2.29"
+proptest = "1.11.0"
 tempfile = "3"
 
 [profile.release]
