@@ -273,6 +273,16 @@ impl Scanner for Archives {
         Requirements::default()
     }
 
+    fn blast_radius(&self) -> Option<&'static str> {
+        Some(
+            "Xcode archives contain the dSYMs for builds you shipped.\n\
+             Without them, crash reports from those versions cannot be\n\
+             symbolicated — you will see memory addresses instead of function\n\
+             names, for every user still running them. Apple does not keep a\n\
+             copy you can retrieve.",
+        )
+    }
+
     fn scan(&self, ctx: &ScanCtx) -> Result<Vec<Candidate>, ScannerError> {
         let Some(dev) = developer_dir(ctx) else {
             return Ok(Vec::new());

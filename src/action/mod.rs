@@ -5,6 +5,7 @@
 //! isolated behind it.
 
 pub mod breaker;
+pub mod confirm;
 pub mod delegate;
 pub mod filter;
 pub mod liveness;

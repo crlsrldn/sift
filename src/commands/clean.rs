@@ -15,7 +15,7 @@
 //!   prints its `sift restore <id>` command. A reversibility guarantee the user
 //!   cannot find is not a guarantee.
 
-use crate::action::{breaker, filter, liveness, purge, quarantine};
+use crate::action::{breaker, confirm, filter, liveness, purge, quarantine};
 use crate::agent::{gates, notify};
 use crate::caps::Capabilities;
 use crate::config::Config;
@@ -92,7 +92,7 @@ pub fn run(
     let filter_set = only.map(only_filter).transpose()?;
     let report = crate::scan::registry().run(&ctx, filter_set.as_ref());
 
-    let filtered = filter::apply(&ctx, report.candidates.clone(), |c| {
+    let mut filtered = filter::apply(&ctx, report.candidates.clone(), |c| {
         liveness::check(&ctx, c)
     });
 
@@ -132,10 +132,58 @@ pub fn run(
         return Ok(());
     }
 
-    // Confirmation. `--scheduled` has no TTY, and the whole point of the
-    // scheduled run is that it is unattended — arming it is the config's job,
-    // not a prompt's.
-    if !yes && !scheduled && !confirm(&filtered.accepted)? {
+    // Destructive scanners are confirmed individually, by name, and --yes does
+    // NOT cover them. Someone who scripts `sift clean --yes` has not thereby
+    // consented to permanently deleting their Trash; that authorisation comes
+    // from the two config switches, which is also what authorises the
+    // unattended run.
+    if !scheduled {
+        let destructive = confirm::destructive_by_scanner(&filtered.accepted);
+        if !destructive.is_empty() {
+            let registry = crate::scan::registry();
+            let mut declined: Vec<&'static str> = Vec::new();
+
+            for (scanner, group) in &destructive {
+                let radius = registry.blast_radius_of(scanner).unwrap_or(
+                    "This is irreversible. No blast radius was declared for this \
+                     scanner, which is itself a reason not to proceed.",
+                );
+                let reversible = group.iter().all(|c| c.target.is_reversible());
+
+                let stdin = std::io::stdin();
+                let mut reader = stdin.lock();
+                let mut out = std::io::stdout();
+                let ok = confirm::confirm_destructive(
+                    scanner,
+                    radius,
+                    group,
+                    reversible,
+                    &mut reader,
+                    &mut out,
+                )
+                .unwrap_or(false);
+
+                if !ok {
+                    declined.push(scanner);
+                }
+            }
+
+            if !declined.is_empty() {
+                println!();
+                println!("  Skipping: {}", declined.join(", "));
+                filtered.accepted.retain(|c| !declined.contains(&c.scanner));
+                if filtered.accepted.is_empty() {
+                    println!("Nothing left to do.");
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    // The ordinary confirmation, for everything reversible. `--scheduled` has
+    // no TTY, and the whole point of the scheduled run is that it is
+    // unattended — arming it is the config's job, not a prompt's.
+    if !yes && !scheduled && !confirm_routine(&filtered.accepted)? {
         println!("Aborted. Nothing was moved.");
         return Ok(());
     }
@@ -264,7 +312,7 @@ fn print_outcome(
     println!("  Expires: in {ttl_days} days, after which it is purged automatically.");
 }
 
-fn confirm(candidates: &[Candidate]) -> Result<bool> {
+fn confirm_routine(candidates: &[Candidate]) -> Result<bool> {
     let total: u64 = candidates.iter().map(|c| c.bytes_on_disk).sum();
 
     println!();

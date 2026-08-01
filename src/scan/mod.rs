@@ -96,6 +96,13 @@ pub enum Target {
     Delegated(DelegatedCmd),
     /// An APFS snapshot, thinned via `tmutil`.
     Snapshot(SnapshotRef),
+    /// A path deleted outright, without staging.
+    ///
+    /// Only `trash` uses this: `~/.Trash` **is** the user's quarantine, and
+    /// moving its contents into a second one would be theatre. The type exists
+    /// so that irreversibility is a property the pipeline reads rather than a
+    /// rule each scanner is trusted to remember.
+    HardDelete(PathBuf),
 }
 
 impl Target {
@@ -104,11 +111,20 @@ impl Target {
         matches!(self, Target::Path(_))
     }
 
+    /// The path this would destroy outright, if any.
+    pub fn hard_delete_path(&self) -> Option<&std::path::Path> {
+        match self {
+            Target::HardDelete(p) => Some(p),
+            _ => None,
+        }
+    }
+
     pub fn display(&self) -> String {
         match self {
             Target::Path(p) => p.display().to_string(),
             Target::Delegated(c) => c.display(),
             Target::Snapshot(s) => s.name.clone(),
+            Target::HardDelete(p) => p.display().to_string(),
         }
     }
 }
@@ -215,6 +231,19 @@ pub trait Scanner: Send + Sync {
     /// Find candidates. **Must have no side effects** (FR-1) — this runs on
     /// every `sift scan`, which the user is entitled to treat as read-only.
     fn scan(&self, ctx: &ScanCtx) -> std::result::Result<Vec<Candidate>, ScannerError>;
+
+    /// What is permanently lost if this scanner acts.
+    ///
+    /// Required for every Destructive scanner and enforced by a test over the
+    /// registry. `None` is only valid for Safe and Rebuildable tiers, where the
+    /// answer is "nothing you cannot get back".
+    ///
+    /// This is the sentence a user reads immediately before typing the
+    /// scanner's name to confirm, so it must say what they lose in their own
+    /// terms — not what the scanner does.
+    fn blast_radius(&self) -> Option<&'static str> {
+        None
+    }
 }
 
 /// Everything one run produced.
@@ -278,6 +307,14 @@ impl Registry {
 
     pub fn ids(&self) -> Vec<&'static str> {
         self.scanners.iter().map(|s| s.id()).collect()
+    }
+
+    /// The declared blast radius for a scanner, if it has one.
+    pub fn blast_radius_of(&self, id: &str) -> Option<&'static str> {
+        self.scanners
+            .iter()
+            .find(|s| s.id() == id)
+            .and_then(|s| s.blast_radius())
     }
 
     pub fn len(&self) -> usize {

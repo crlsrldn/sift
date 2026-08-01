@@ -413,7 +413,13 @@ fn a_scheduled_run_above_the_free_space_floor_is_gated_and_costs_nothing() {
     std::fs::create_dir_all(sb.dir.path().join("config/sift")).unwrap();
     std::fs::write(
         sb.dir.path().join("config/sift/config.toml"),
-        "[general]\nfree_space_floor = \"1\"\n\n[schedule]\nmax_days_between_runs = 36500\n",
+        // skip_on_battery_below = 0 pins the battery gate off: no percentage is
+        // below zero. Without it these tests read the HOST's power state and
+        // fail on a laptop that happens to be unplugged — testing the machine
+        // rather than sift. The battery logic has its own unit tests with
+        // injected state.
+        "[general]\nfree_space_floor = \"1\"\n\n\
+         [schedule]\nmax_days_between_runs = 36500\nskip_on_battery_below = 0\n",
     )
     .unwrap();
 
@@ -453,7 +459,13 @@ fn a_gated_run_records_its_reason_in_history() {
     std::fs::create_dir_all(sb.dir.path().join("config/sift")).unwrap();
     std::fs::write(
         sb.dir.path().join("config/sift/config.toml"),
-        "[general]\nfree_space_floor = \"1\"\n\n[schedule]\nmax_days_between_runs = 36500\n",
+        // skip_on_battery_below = 0 pins the battery gate off: no percentage is
+        // below zero. Without it these tests read the HOST's power state and
+        // fail on a laptop that happens to be unplugged — testing the machine
+        // rather than sift. The battery logic has its own unit tests with
+        // injected state.
+        "[general]\nfree_space_floor = \"1\"\n\n\
+         [schedule]\nmax_days_between_runs = 36500\nskip_on_battery_below = 0\n",
     )
     .unwrap();
 
@@ -484,7 +496,8 @@ fn a_scheduled_run_below_the_floor_proceeds_normally() {
     std::fs::create_dir_all(sb.dir.path().join("config/sift")).unwrap();
     std::fs::write(
         sb.dir.path().join("config/sift/config.toml"),
-        "[general]\nfree_space_floor = \"100TiB\"\n",
+        "[general]\nfree_space_floor = \"100TiB\"\n\n\
+         [schedule]\nskip_on_battery_below = 0\n",
     )
     .unwrap();
 
@@ -505,7 +518,8 @@ fn scheduled_mode_does_not_prompt() {
     std::fs::create_dir_all(sb.dir.path().join("config/sift")).unwrap();
     std::fs::write(
         sb.dir.path().join("config/sift/config.toml"),
-        "[general]\nfree_space_floor = \"100TiB\"\n",
+        "[general]\nfree_space_floor = \"100TiB\"\n\n\
+         [schedule]\nskip_on_battery_below = 0\n",
     )
     .unwrap();
 

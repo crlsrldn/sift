@@ -159,8 +159,9 @@ pub fn quarantine(candidates: &[Candidate], ttl_days: u32) -> Result<(Outcome, M
     let mut planned: Vec<(usize, PathBuf, PathBuf)> = Vec::new();
     for c in candidates {
         let Target::Path(src) = &c.target else {
-            // Delegated and snapshot targets bypass quarantine entirely
-            // (FR-15). They are handled by the delegate runner, not here.
+            // Delegated, snapshot, and hard-delete targets bypass quarantine
+            // entirely (FR-15). They are handled elsewhere; staging them here
+            // would be a silent contradiction of what the type says.
             continue;
         };
 
