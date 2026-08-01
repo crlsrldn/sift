@@ -198,6 +198,19 @@ pub fn render(d: &Diagnosis) -> String {
              inherited access\n              from your terminal. It does not \
              prove the scheduled agent has it —\n              see `sift install`."
         );
+
+        // The distinct diagnosis spec §10 asks for, completed now that the
+        // agent log exists. Interactive FDA plus permission errors in the
+        // agent's own log is the launchd/Terminal mismatch, and it is otherwise
+        // invisible until someone notices scheduled runs finding nothing.
+        if let Ok(Some(diagnosis)) = crate::agent::install::agent_permission_mismatch() {
+            let _ = writeln!(o);
+            let _ = writeln!(o, "  MISMATCH DETECTED");
+            let _ = writeln!(o);
+            for line in diagnosis.lines() {
+                let _ = writeln!(o, "  {line}");
+            }
+        }
     }
 
     // Tools

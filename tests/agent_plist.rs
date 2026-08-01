@@ -81,3 +81,111 @@ fn the_plist_lands_in_the_per_user_launchagents_directory() {
     assert!(!s.starts_with("/Library/"), "{s}");
     assert!(!s.contains("LaunchDaemons"), "{s}");
 }
+
+// ---------------------------------------------------------------------------
+// install --dry-run
+// ---------------------------------------------------------------------------
+
+fn bin() -> std::path::PathBuf {
+    let mut p = std::env::current_exe().unwrap();
+    p.pop();
+    if p.ends_with("deps") {
+        p.pop();
+    }
+    p.join("sift")
+}
+
+/// Whether the agent is loaded in this user's real launchd session.
+fn agent_loaded() -> bool {
+    let uid = unsafe { libc::getuid() };
+    Command::new("launchctl")
+        .args(["print", &format!("gui/{uid}/{}", plist::LABEL)])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[test]
+fn install_dry_run_writes_nothing_and_loads_nothing() {
+    // `launchctl bootstrap gui/$UID` targets the caller's real login session
+    // and is unaffected by $HOME, so there is no way to rehearse an install by
+    // pointing the environment somewhere harmless. --dry-run is that rehearsal,
+    // and this test is what keeps it honest.
+    //
+    // Skipped if the agent is already installed for real, because then the
+    // "still not loaded" assertion would be meaningless.
+    if agent_loaded() {
+        eprintln!("skipping: the agent is genuinely installed on this machine");
+        return;
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(bin())
+        .args(["install", "--dry-run"])
+        .env("HOME", dir.path())
+        .env("XDG_STATE_HOME", dir.path().join("state"))
+        .env("XDG_CONFIG_HOME", dir.path().join("config"))
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&out.stdout);
+
+    assert!(
+        text.contains("Nothing has been written or loaded"),
+        "{text}"
+    );
+    assert!(text.contains("would write"), "{text}");
+    assert!(text.contains("launchctl bootstrap"), "{text}");
+    // The consequence, stated before the user commits to it.
+    assert!(text.contains("persist across reboots"), "{text}");
+
+    assert!(
+        !dir.path()
+            .join("Library/LaunchAgents/com.cindral.sift.plist")
+            .exists(),
+        "--dry-run wrote the plist"
+    );
+    assert!(!agent_loaded(), "--dry-run loaded a real LaunchAgent");
+}
+
+#[test]
+fn install_dry_run_json_carries_the_whole_plist() {
+    if agent_loaded() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(bin())
+        .args(["install", "--dry-run", "--json"])
+        .env("HOME", dir.path())
+        .env("XDG_STATE_HOME", dir.path().join("state"))
+        .env("XDG_CONFIG_HOME", dir.path().join("config"))
+        .output()
+        .unwrap();
+
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("not valid JSON");
+
+    assert_eq!(v["dry_run"], true);
+    assert!(v["would_run"].as_str().unwrap().contains("bootstrap"));
+    assert!(v["plist"].as_str().unwrap().contains("com.cindral.sift"));
+    assert!(!agent_loaded());
+}
+
+#[test]
+fn uninstall_is_idempotent_when_nothing_is_installed() {
+    if agent_loaded() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(bin())
+        .arg("uninstall")
+        .env("HOME", dir.path())
+        .env("XDG_STATE_HOME", dir.path().join("state"))
+        .env("XDG_CONFIG_HOME", dir.path().join("config"))
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stdout).contains("nothing was installed"));
+}

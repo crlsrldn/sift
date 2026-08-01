@@ -16,7 +16,7 @@
 //!   cannot find is not a guarantee.
 
 use crate::action::{breaker, filter, liveness, purge, quarantine};
-use crate::agent::gates;
+use crate::agent::{gates, notify};
 use crate::caps::Capabilities;
 use crate::config::Config;
 use crate::fs::volume;
@@ -155,6 +155,24 @@ pub fn run(
     record.purged_bytes = purged.as_ref().map(|p| p.bytes_purged).unwrap_or(0);
     if let Err(e) = history::append(&record) {
         tracing::warn!(error = %e, "could not append to run history");
+    }
+
+    // PRD §7: notify on a scheduled run that reclaimed more than the
+    // threshold. Interactive runs print their result already; a notification
+    // would be redundant noise on top of output the user is looking at.
+    if scheduled {
+        let sources: Vec<&str> = filtered
+            .accepted
+            .iter()
+            .map(|c| c.scanner)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        notify::maybe_notify(
+            outcome.bytes_staged,
+            cfg.schedule.notify_threshold.bytes(),
+            &sources,
+        );
     }
 
     if json {
