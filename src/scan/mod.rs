@@ -356,6 +356,16 @@ fn run_one(s: &dyn Scanner, ctx: &ScanCtx) -> Outcome {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| s.scan(ctx)));
 
     match result {
+        // A scanner that ran and claimed nothing is recorded too. PRD §7 says
+        // skipped items are surfaced rather than silently omitted, and a
+        // scanner that vanishes entirely from the report is indistinguishable
+        // from one that was never registered. This does not appear in the human
+        // report body — that would be noise — but it is in --json, so "did it
+        // even look?" is answerable.
+        Ok(Ok(candidates)) if candidates.is_empty() => Outcome::Skipped(
+            id,
+            SkippedScanner::NothingToDo("ran; nothing eligible".into()),
+        ),
         Ok(Ok(candidates)) => Outcome::Found(candidates),
         Ok(Err(e)) => {
             tracing::warn!(scanner = id, error = %e, "scanner failed");
@@ -373,6 +383,9 @@ fn run_one(s: &dyn Scanner, ctx: &ScanCtx) -> Outcome {
     }
 }
 
+pub mod app_caches;
+pub mod logs;
+pub mod rust;
 pub mod xcode;
 
 /// The production registry.
@@ -384,6 +397,10 @@ pub fn registry() -> Registry {
         .with(Box::new(xcode::DerivedData)) // S2
         .with(Box::new(xcode::DeviceSupport)) // S3
         .with(Box::new(xcode::Archives)) // S4 — Destructive, gated by max_risk
+        .with(Box::new(rust::Targets)) // S6
+        .with(Box::new(rust::CargoCache)) // S7
+        .with(Box::new(app_caches::AppCaches)) // S14
+        .with(Box::new(logs::Logs)) // S17
 }
 
 /// Compile a `--only` glob into a set matching scanner ids.
