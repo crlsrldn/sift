@@ -28,7 +28,10 @@ fn main() {
     let files_f = files as f64;
     let files = files_f;
 
-    println!("  mode         {}", if streaming { "streaming" } else { "collecting" });
+    println!(
+        "  mode         {}",
+        if streaming { "streaming" } else { "collecting" }
+    );
     println!("  path         {}", path.display());
     println!("  files        {}", files_f as u64);
     println!("  skipped      {skipped}");
