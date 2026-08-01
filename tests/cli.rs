@@ -102,17 +102,10 @@ fn commands_not_yet_implemented_say_so_rather_than_exiting_zero() {
     // What must not happen is a command silently exiting 0 having done nothing:
     // indistinguishable from having run and found nothing.
     //
-    // `doctor` (PR-08) and `scan` (PR-09) are absent because they are
-    // implemented. Each PR that lands a command removes it here, so the list is
+    // `doctor` (PR-08), `scan` (PR-09), and `report` (PR-17) are absent because
+    // they are implemented. Each PR that lands a command removes it here, so the list is
     // a live inventory of what remains rather than a stale copy of the plan.
-    for cmd in [
-        "clean",
-        "purge",
-        "restore",
-        "report",
-        "install",
-        "uninstall",
-    ] {
+    for cmd in ["clean", "purge", "restore", "install", "uninstall"] {
         let args: Vec<&str> = if cmd == "restore" {
             vec![cmd, "0192abc"]
         } else {
@@ -339,4 +332,79 @@ fn doctor_names_the_binary_in_fda_instructions_when_something_is_blocked() {
         assert!(text.contains("NOT to Terminal"), "{text}");
         assert!(text.contains("sift"), "{text}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// FR-8 / FR-9 — history and report
+// ---------------------------------------------------------------------------
+
+#[test]
+fn report_with_no_history_gives_guidance_not_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(bin())
+        .args(["report"])
+        .env("XDG_STATE_HOME", dir.path())
+        .env("XDG_CONFIG_HOME", "/nonexistent-sift-test-config")
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("no run history"), "{text}");
+    assert!(text.contains("sift scan"), "{text}");
+}
+
+#[test]
+fn a_scan_records_a_history_entry_and_report_shows_it() {
+    // FR-8: every run appends a record, including a pure scan. The trend is
+    // only meaningful if scans are recorded, not just runs that deleted things.
+    let state = tempfile::tempdir().unwrap();
+
+    let scan = Command::new(bin())
+        .args(["scan"])
+        .env("XDG_STATE_HOME", state.path())
+        .env("XDG_CONFIG_HOME", "/nonexistent-sift-test-config")
+        .output()
+        .unwrap();
+    assert_eq!(scan.status.code(), Some(0));
+
+    let history = state.path().join("sift/history.jsonl");
+    assert!(history.exists(), "scan did not write a history record");
+    let text = std::fs::read_to_string(&history).unwrap();
+    assert!(text.contains("\"command\":\"scan\""), "{text}");
+
+    let report = Command::new(bin())
+        .args(["report"])
+        .env("XDG_STATE_HOME", state.path())
+        .env("XDG_CONFIG_HOME", "/nonexistent-sift-test-config")
+        .output()
+        .unwrap();
+    assert_eq!(report.status.code(), Some(0));
+    let out = String::from_utf8_lossy(&report.stdout);
+    assert!(out.contains("last run"), "{out}");
+    assert!(out.contains("1 run(s)"), "{out}");
+}
+
+#[test]
+fn report_json_is_parseable_and_versioned() {
+    let state = tempfile::tempdir().unwrap();
+    let _ = Command::new(bin())
+        .args(["scan"])
+        .env("XDG_STATE_HOME", state.path())
+        .env("XDG_CONFIG_HOME", "/nonexistent-sift-test-config")
+        .output()
+        .unwrap();
+
+    let out = Command::new(bin())
+        .args(["report", "--json", "--days", "30"])
+        .env("XDG_STATE_HOME", state.path())
+        .env("XDG_CONFIG_HOME", "/nonexistent-sift-test-config")
+        .output()
+        .unwrap();
+
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8_lossy(&out.stdout)).expect("not valid JSON");
+    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["window_days"], 30);
+    assert_eq!(v["runs"], 1);
 }
