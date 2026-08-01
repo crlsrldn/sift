@@ -189,3 +189,94 @@ fn uninstall_is_idempotent_when_nothing_is_installed() {
     assert_eq!(out.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&out.stdout).contains("nothing was installed"));
 }
+
+// ---------------------------------------------------------------------------
+// Refusing to install a build artifact
+// ---------------------------------------------------------------------------
+
+#[test]
+fn build_artifact_paths_are_recognised() {
+    use sift::agent::install::is_build_artifact;
+    use std::path::Path;
+
+    for p in [
+        "/Users/x/proj/target/release/sift",
+        "/Users/x/proj/target/debug/sift",
+        "/Users/x/proj/target/aarch64-apple-darwin/release/sift",
+    ] {
+        assert!(is_build_artifact(Path::new(p)), "{p} should be an artifact");
+    }
+}
+
+#[test]
+fn installed_paths_are_not_mistaken_for_artifacts() {
+    // A false positive here would make sift refuse to install for real users.
+    use sift::agent::install::is_build_artifact;
+    use std::path::Path;
+
+    for p in [
+        "/opt/homebrew/bin/sift",
+        "/usr/local/bin/sift",
+        "/Users/x/.local/bin/sift",
+        "/Users/x/target-practice/sift",
+        "/Users/x/release/sift",
+    ] {
+        assert!(!is_build_artifact(Path::new(p)), "{p} is not an artifact");
+    }
+}
+
+#[test]
+fn installing_from_a_build_directory_is_refused_with_the_fix() {
+    // Principle 7: refuse rather than quietly set up a job that will break the
+    // next time someone runs `cargo clean`.
+    if agent_loaded() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let out = Command::new(bin())
+        .arg("install")
+        .env("HOME", dir.path())
+        .env("XDG_STATE_HOME", dir.path().join("state"))
+        .env("XDG_CONFIG_HOME", dir.path().join("config"))
+        .output()
+        .unwrap();
+
+    // The test binary lives under target/, so this is the artifact path.
+    assert_eq!(out.status.code(), Some(2), "expected a config error");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("Cargo build artifact"), "{err}");
+    // Refusing without saying what to do instead would be useless.
+    assert!(err.contains("cp "), "the fix must be given: {err}");
+    assert!(err.contains("SYMLINK will not help"), "{err}");
+
+    assert!(!agent_loaded(), "a refused install still loaded an agent");
+}
+
+#[test]
+fn a_binary_outside_a_build_directory_is_accepted() {
+    // The other half: the refusal must not block a legitimate install.
+    if agent_loaded() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let stable = dir.path().join("bin");
+    std::fs::create_dir_all(&stable).unwrap();
+    let copied = stable.join("sift");
+    std::fs::copy(bin(), &copied).unwrap();
+
+    let out = Command::new(&copied)
+        .args(["install", "--dry-run"])
+        .env("HOME", dir.path())
+        .env("XDG_STATE_HOME", dir.path().join("state"))
+        .env("XDG_CONFIG_HOME", dir.path().join("config"))
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(0));
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !text.contains("Cargo build artifact"),
+        "a copy outside target/ was wrongly flagged:\n{text}"
+    );
+    assert!(!agent_loaded());
+}

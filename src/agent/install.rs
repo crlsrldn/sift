@@ -26,6 +26,62 @@ pub struct Installed {
     pub already_loaded: bool,
 }
 
+/// Whether a path lives inside a Cargo build directory.
+///
+/// Installing an agent that points at `target/release/sift` sets up a silent
+/// failure: `cargo clean`, `cargo build` with a different profile, or simply
+/// moving the checkout leaves launchd invoking a path that no longer exists.
+/// The job then fails at 03:00 every night forever, and nothing surfaces it —
+/// which is precisely the outcome `current_exe()` was chosen to avoid, arriving
+/// by a different route.
+pub fn is_build_artifact(exe: &std::path::Path) -> bool {
+    let mut components = exe.components().rev();
+    // .../target/{debug,release}/sift, or .../target/<triple>/{debug,release}/sift
+    let _binary = components.next();
+    let profile = components
+        .next()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned());
+
+    if !matches!(profile.as_deref(), Some("debug") | Some("release")) {
+        return false;
+    }
+    // Walk up looking for `target`, allowing one target-triple directory.
+    for c in components.take(2) {
+        if c.as_os_str() == "target" {
+            return true;
+        }
+    }
+    false
+}
+
+/// A warning to show before installing from a build directory.
+///
+/// Written unindented; callers indent uniformly.
+pub fn build_artifact_warning(exe: &std::path::Path) -> String {
+    let p = exe.display();
+    [
+        "WARNING: this binary is a Cargo build artifact.".to_string(),
+        String::new(),
+        format!("  {p}"),
+        String::new(),
+        "launchd will invoke that exact path. `cargo clean`, a rebuild under a".into(),
+        "different profile, or moving this checkout will leave the scheduled".into(),
+        "run failing every night with nothing to show for it.".into(),
+        String::new(),
+        "Copy it somewhere stable first, then install from there:".into(),
+        String::new(),
+        format!("  cp {p} ~/.local/bin/sift"),
+        "  ~/.local/bin/sift install".into(),
+        String::new(),
+        "A SYMLINK will not help: the path is canonicalised, so installing".into(),
+        "through a symlink records this same build path.".into(),
+    ]
+    .join(
+        "
+",
+    )
+}
+
 /// What `install` would do, without doing any of it.
 ///
 /// `launchctl bootstrap gui/$UID` targets the caller's real login session — it
@@ -59,6 +115,13 @@ pub fn install(cfg: &Config) -> Result<Installed> {
         .map_err(|e| SiftError::Config(format!("cannot determine this binary's path: {e}")))?
         .canonicalize()
         .map_err(|e| SiftError::Config(format!("cannot resolve this binary's path: {e}")))?;
+
+    // Refuse rather than quietly set up a job that will break (Principle 7).
+    // `--force` is not offered: someone who genuinely wants this can copy the
+    // binary, which is the fix anyway and takes one command.
+    if is_build_artifact(&exe) {
+        return Err(SiftError::Config(build_artifact_warning(&exe)));
+    }
 
     let already_loaded = is_loaded();
     if already_loaded {
