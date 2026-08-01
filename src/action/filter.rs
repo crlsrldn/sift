@@ -107,7 +107,11 @@ pub fn check(ctx: &ScanCtx, c: &Candidate) -> Option<Rejection> {
         }
     }
 
-    if c.bytes_on_disk == 0 {
+    // Only path targets are rejected for being empty. A delegated command's
+    // reclaim is not knowable without running the tool, and `scan` must not run
+    // anything (FR-1) — so a delegated candidate legitimately reports zero and
+    // must not be dropped for it.
+    if c.bytes_on_disk == 0 && matches!(c.target, Target::Path(_)) {
         return Some(Rejection::Empty);
     }
 
