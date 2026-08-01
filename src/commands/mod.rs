@@ -6,6 +6,7 @@
 //! printed nothing and exited 0 would be indistinguishable from a `clean` that
 //! found nothing to do.
 
+pub mod clean;
 pub mod config_check;
 pub mod doctor;
 pub mod purge;
