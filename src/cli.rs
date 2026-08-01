@@ -100,6 +100,14 @@ pub struct ScanArgs {
     /// Only run scanners matching this glob, e.g. `xcode-*`.
     #[arg(long, value_name = "GLOB")]
     pub only: Option<String>,
+
+    /// Ask delegated tools how much they would reclaim.
+    ///
+    /// Off by default because it runs `brew`, `docker`, and `xcrun` — which
+    /// costs seconds and lets those tools create their own cache directories.
+    /// With it, delegated lines carry a real figure instead of "unknown".
+    #[arg(long)]
+    pub estimate_delegated: bool,
 }
 
 #[derive(Debug, Args)]
@@ -119,6 +127,10 @@ pub struct CleanArgs {
     /// interactive confirmation that --yes does not satisfy.
     #[arg(long)]
     pub yes: bool,
+
+    /// Ask delegated tools how much they would reclaim before confirming.
+    #[arg(long)]
+    pub estimate_delegated: bool,
 }
 
 #[derive(Debug, Args)]
@@ -150,9 +162,10 @@ impl Cli {
     /// (Principle 2), so the zero-argument behaviour must be the reporting one.
     pub fn effective_command(self) -> (Command, GlobalArgs) {
         let global = self.global.clone();
-        let command = self
-            .command
-            .unwrap_or(Command::Scan(ScanArgs { only: None }));
+        let command = self.command.unwrap_or(Command::Scan(ScanArgs {
+            only: None,
+            estimate_delegated: false,
+        }));
         (command, global)
     }
 }

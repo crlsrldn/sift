@@ -31,6 +31,7 @@ pub fn run(
     only: Option<&str>,
     dry_run: bool,
     yes: bool,
+    estimate_delegated: bool,
     scheduled: bool,
     json: bool,
 ) -> Result<()> {
@@ -38,7 +39,8 @@ pub fn run(
         Arc::new(cfg.clone()),
         volume::root()?,
         Capabilities::probe(),
-    )?;
+    )?
+    .with_delegated_estimates(estimate_delegated);
 
     // FR-13: expired runs are purged at the start of the next run. Skipped
     // under --dry-run, which must not mutate anything at all.
