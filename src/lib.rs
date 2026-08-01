@@ -17,6 +17,7 @@ pub mod fs;
 pub mod logging;
 pub mod paths;
 pub mod risk;
+pub mod scan;
 
 pub use config::Config;
 pub use error::{ExitCode, Result, ScannerError, SiftError};

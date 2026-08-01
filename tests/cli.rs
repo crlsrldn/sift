@@ -102,11 +102,10 @@ fn commands_not_yet_implemented_say_so_rather_than_exiting_zero() {
     // What must not happen is a command silently exiting 0 having done nothing:
     // indistinguishable from having run and found nothing.
     //
-    // `doctor` is absent from this list because PR-08 implemented it. Each PR
-    // that lands a command removes it here, so the list is a live inventory of
-    // what remains rather than a stale copy of the plan.
+    // `doctor` (PR-08) and `scan` (PR-09) are absent because they are
+    // implemented. Each PR that lands a command removes it here, so the list is
+    // a live inventory of what remains rather than a stale copy of the plan.
     for cmd in [
-        "scan",
         "clean",
         "purge",
         "restore",
@@ -135,7 +134,42 @@ fn no_arguments_behaves_as_scan() {
     let bare = sift(&[]);
     let scan = sift(&["scan"]);
     assert_eq!(code(&bare), code(&scan));
-    assert_eq!(stderr(&bare), stderr(&scan));
+    assert_eq!(stdout(&bare), stdout(&scan));
+}
+
+#[test]
+fn scan_deletes_nothing_and_says_so() {
+    // FR-1 and Principle 2. `scan` has no path to deletion — not a flag, not a
+    // config key — and the output must make that unambiguous.
+    let out = sift(&["scan"]);
+    assert_eq!(code(&out), 0, "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("Nothing has been deleted"),
+        "{}",
+        stdout(&out)
+    );
+}
+
+#[test]
+fn scan_reports_the_volume() {
+    let out = sift(&["scan"]);
+    assert!(stdout(&out).contains("Volume:"), "{}", stdout(&out));
+}
+
+#[test]
+fn scan_json_is_parseable_and_versioned() {
+    let out = sift(&["scan", "--json"]);
+    let v: serde_json::Value =
+        serde_json::from_str(&stdout(&out)).expect("scan --json was not valid JSON");
+    assert_eq!(v["schema_version"], 1);
+    assert!(v["candidates"].is_array());
+    assert!(v["volume"]["total_bytes"].as_u64().unwrap() > 0);
+}
+
+#[test]
+fn scan_rejects_an_invalid_only_pattern() {
+    let out = sift(&["scan", "--only", "["]);
+    assert_eq!(code(&out), 64, "{}", stderr(&out));
 }
 
 #[test]

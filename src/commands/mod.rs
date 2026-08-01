@@ -8,6 +8,7 @@
 
 pub mod config_check;
 pub mod doctor;
+pub mod scan;
 
 use crate::{Result, SiftError};
 
