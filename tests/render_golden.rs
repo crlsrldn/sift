@@ -396,27 +396,91 @@ fn no_disabled_block_appears_without_the_flag() {
     assert!(!out.contains("Held by disabled scanners"), "{out}");
 }
 
-#[test]
-fn the_unknown_footnote_does_not_suggest_a_flag_already_given() {
-    // Telling someone to re-run with a flag they just used implies the number
-    // is retrievable, when the tool has already been asked and had no answer.
-    let mut r = ScanReport {
-        duration: std::time::Duration::from_millis(40),
-        ..Default::default()
-    };
-    r.candidates = vec![Candidate {
-        scanner: "python-caches",
-        target: Target::Delegated(sift::scan::DelegatedCmd::new("uv", &["cache", "prune"])),
+/// A delegated candidate with no size, attributed to a given scanner and tool.
+fn unsized_delegated(scanner: &'static str, program: &'static str, arg: &'static str) -> Candidate {
+    Candidate {
+        scanner,
+        target: Target::Delegated(sift::scan::DelegatedCmd::new(program, &[arg])),
         bytes_on_disk: 0,
         bytes_apparent: 0,
         last_modified: Local::now(),
         risk: Risk::Safe,
-        label: "uv cache".into(),
+        label: format!("{program} cache"),
         reason: "test".into(),
-    }];
+    }
+}
+
+#[test]
+fn a_tool_that_cannot_report_a_size_is_not_blamed_on_the_missing_flag() {
+    // `uv cache prune` has no dry-run and no reporting mode, so its line is
+    // `unknown` no matter what. Telling the user to re-run with
+    // --estimate-delegated sends them after a fix that cannot work — and once
+    // they do re-run, claiming the tool "was asked" is simply false. Both were
+    // printed against a real `uv` line before this.
+    let mut r = ScanReport {
+        duration: std::time::Duration::from_millis(40),
+        ..Default::default()
+    };
+    r.candidates = vec![unsized_delegated("python-caches", "uv", "cache")];
+
+    for estimating in [false, true] {
+        let out = human::render(&r, &ctx_estimating(estimating));
+        assert!(out.contains("`uv` provides no way"), "{out}");
+        assert!(
+            !out.contains("Re-run with --estimate-delegated"),
+            "suggested a flag that cannot help (estimating={estimating}):\n{out}"
+        );
+        assert!(
+            !out.contains("were asked"),
+            "claimed a tool was asked that has no way to answer \
+             (estimating={estimating}):\n{out}"
+        );
+    }
+}
+
+#[test]
+fn a_mix_of_askable_and_unaskable_tools_explains_each() {
+    // `docker` can be asked and `uv` cannot, so one line is worth re-running
+    // for and the other never will be. The report has to say both.
+    let mut r = ScanReport {
+        duration: std::time::Duration::from_millis(40),
+        ..Default::default()
+    };
+    r.candidates = vec![
+        unsized_delegated("python-caches", "uv", "cache"),
+        unsized_delegated("containers", "docker", "system"),
+    ];
+
+    let without = human::render(&r, &ctx_estimating(false));
+    assert!(without.contains("`uv` provides no way"), "{without}");
+    assert!(
+        without.contains("Re-run with --estimate-delegated to ask the rest"),
+        "{without}"
+    );
+
+    let with = human::render(&r, &ctx_estimating(true));
+    assert!(with.contains("`uv` provides no way"), "{with}");
+    assert!(with.contains("The rest were asked"), "{with}");
+    assert!(!with.contains("Re-run with --estimate-delegated"), "{with}");
+}
+
+#[test]
+fn the_unknown_footnote_does_not_suggest_a_flag_already_given() {
+    // Telling someone to re-run with a flag they just used implies the number
+    // is retrievable, when the tool has already been asked and had no answer.
+    //
+    // `docker`, not `uv`: this assertion is only meaningful for a tool that
+    // *can* be asked. Written against `uv` — which has no reporting mode at
+    // all — it passed while asserting the opposite of the truth, since the
+    // renderer was claiming uv had been asked when nothing had asked it.
+    let mut r = ScanReport {
+        duration: std::time::Duration::from_millis(40),
+        ..Default::default()
+    };
+    r.candidates = vec![unsized_delegated("containers", "docker", "system")];
 
     let asked = human::render(&r, &ctx_estimating(true));
-    assert!(asked.contains("did not report one"), "{asked}");
+    assert!(asked.contains("were asked"), "{asked}");
     assert!(
         !asked.contains("Re-run with --estimate-delegated"),
         "{asked}"

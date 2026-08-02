@@ -101,6 +101,11 @@ sift scan --estimate-delegated
 It costs a few seconds and lets those tools create their own cache
 directories, which is why it is not the default.
 
+Not every tool can answer. `brew`, `docker` and `simctl` report what they
+hold; `uv`, `pnpm`, `yarn` and `cargo-sweep` have no dry-run and no reporting
+mode, so their lines stay `unknown` however you run them. The report says
+which is which rather than implying a flag would help.
+
 **`--include-disabled`.** `enabled = false` was doing two unrelated jobs:
 *never act on this*, which is why people set it, and *never tell me about
 this*, which nobody chose. Disabling the delegated scanners to keep a nightly

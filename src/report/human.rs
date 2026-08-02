@@ -89,18 +89,7 @@ pub fn render(report: &ScanReport, ctx: &ScanCtx) -> String {
                 o,
                 "  {unknown} line(s) show `unknown` and are not in that total."
             );
-            // Telling someone to pass a flag they just passed is worse than
-            // saying nothing: it implies the number is retrievable when the
-            // tool has already been asked and had no answer.
-            let _ = writeln!(
-                o,
-                "  {}",
-                if ctx.estimate_delegated {
-                    "Those tools were asked, and did not report one."
-                } else {
-                    "Re-run with --estimate-delegated to ask those tools for a figure."
-                }
-            );
+            let _ = write_unknown_explanation(&mut o, report, ctx);
         }
     }
 
@@ -157,6 +146,80 @@ fn render_families(o: &mut String, report: &ScanReport) {
             let _ = write_row(o, 4, &c.label, &candidate_size(c), c.risk.as_str());
         }
     }
+}
+
+/// Why the `unknown` lines are unknown.
+///
+/// There are three different answers and they call for different actions, so
+/// collapsing them misleads:
+///
+///   * **nobody asked** — `--estimate-delegated` was off. Re-running helps.
+///   * **asked, no answer** — the tool supports being asked and returned
+///     nothing useful this time. Re-running will not help; something is wrong
+///     with the tool.
+///   * **cannot be asked** — `uv cache prune`, `pnpm store prune`,
+///     `yarn cache clean` and `cargo-sweep` have no dry-run and no reporting
+///     mode. Re-running will *never* help, and saying otherwise sends the user
+///     after a flag that cannot fix it.
+///
+/// The third case was previously reported as the second, which is how a `uv`
+/// line came to claim it had been asked when nothing had asked it.
+fn write_unknown_explanation(
+    o: &mut String,
+    report: &ScanReport,
+    ctx: &ScanCtx,
+) -> std::fmt::Result {
+    // Split by whether the tool can be asked at all, naming the *tool* rather
+    // than the scanner — `uv` is what the user recognises and can go check,
+    // `python-caches` is sift's internal id for the rule.
+    let mut unaskable: Vec<&str> = Vec::new();
+    let mut askable = false;
+
+    for c in &report.candidates {
+        let crate::scan::Target::Delegated(cmd) = &c.target else {
+            continue;
+        };
+        if c.bytes_on_disk != 0 {
+            continue;
+        }
+        if crate::scan::scanner_estimates_size(c.scanner) {
+            askable = true;
+        } else {
+            unaskable.push(&cmd.program);
+        }
+    }
+    unaskable.sort_unstable();
+    unaskable.dedup();
+
+    if !unaskable.is_empty() {
+        let (subject, verb) = if unaskable.len() == 1 {
+            (unaskable[0].to_string(), "provides")
+        } else {
+            (unaskable.join(", "), "provide")
+        };
+        writeln!(
+            o,
+            "  `{subject}` {verb} no way to ask what would be freed — that \
+             figure\n  is not obtainable, with or without --estimate-delegated."
+        )?;
+    }
+
+    if askable {
+        // Only mention the flag for lines it could actually change. Suggesting
+        // it for a tool that has no reporting mode sends the user after a fix
+        // that cannot work.
+        writeln!(
+            o,
+            "  {}",
+            if ctx.estimate_delegated {
+                "The rest were asked, and did not report one."
+            } else {
+                "Re-run with --estimate-delegated to ask the rest for a figure."
+            }
+        )?;
+    }
+
+    Ok(())
 }
 
 /// The size column for one candidate.

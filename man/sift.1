@@ -71,6 +71,15 @@ Ask delegated tools how much they would reclaim. Without it those lines report
 .BR unknown ,
 not a size, and are excluded from the run total. Off by default: it spawns
 subprocesses and lets them create their own cache directories.
+.IP
+Only some tools can answer.
+.BR brew ", " docker " and " simctl
+report what they hold;
+.BR uv ", " pnpm ", " yarn " and " cargo\-sweep
+have no dry\-run and no reporting mode, so those lines stay
+.B unknown
+regardless. The report distinguishes the two rather than implying the flag
+would help.
 .TP
 .B \-V ", " \-\-version
 Print the crate version, the commit it was built from, and the build date, as

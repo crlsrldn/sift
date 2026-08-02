@@ -37,6 +37,10 @@ impl Scanner for Containers {
         "containers"
     }
 
+    fn estimates_size(&self) -> bool {
+        true
+    }
+
     fn requirements(&self) -> Requirements {
         Requirements {
             fda: false,

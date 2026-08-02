@@ -264,6 +264,34 @@ pub trait Scanner: Send + Sync {
     fn blast_radius(&self) -> Option<&'static str> {
         None
     }
+
+    /// Whether `--estimate-delegated` can get a size out of this scanner's
+    /// tool.
+    ///
+    /// Not every tool offers one. `brew cleanup --dry-run`, `docker system df`,
+    /// and `simctl list --json` all report what they hold; `uv cache prune`,
+    /// `pnpm store prune`, `yarn cache clean`, and `cargo-sweep` have no
+    /// dry-run and no reporting mode, so there is nothing to ask.
+    ///
+    /// This exists so the report can tell "we did not ask" from "we asked and
+    /// got nothing" from "there is no way to ask". Reporting the third as
+    /// either of the first two sends the user off to re-run with a flag that
+    /// cannot help — which is exactly what the footnote did before this
+    /// existed.
+    fn estimates_size(&self) -> bool {
+        false
+    }
+}
+
+/// Whether the registered scanner with this id can be asked for a size.
+///
+/// Looked up by id because the report holds candidates, not scanners. Unknown
+/// ids answer `false`: a scanner nobody can find certainly cannot be asked.
+pub fn scanner_estimates_size(id: &str) -> bool {
+    registry()
+        .find(id)
+        .map(|s| s.estimates_size())
+        .unwrap_or(false)
 }
 
 /// Everything one run produced.
@@ -342,6 +370,14 @@ pub struct Registry {
 }
 
 impl Registry {
+    /// The registered scanner with this id, if any.
+    pub fn find(&self, id: &str) -> Option<&dyn Scanner> {
+        self.scanners
+            .iter()
+            .find(|s| s.id() == id)
+            .map(|s| s.as_ref())
+    }
+
     /// The production registry. Scanners are added by their implementing PRs.
     pub fn new() -> Self {
         Self {
@@ -794,6 +830,41 @@ mod tests {
             report.skipped[0].1,
             SkippedScanner::RiskGated { .. }
         ));
+    }
+
+    #[test]
+    fn only_scanners_with_a_reporting_tool_claim_they_can_be_asked() {
+        // `--estimate-delegated` can only get a figure where the tool offers
+        // one. `brew cleanup --dry-run`, `docker system df` and
+        // `simctl list --json` do; `uv cache prune`, `pnpm store prune`,
+        // `yarn cache clean` and `cargo-sweep` have no dry-run and no
+        // reporting mode at all.
+        //
+        // Getting this list wrong is not cosmetic: the report uses it to
+        // decide whether to tell the user that re-running with the flag would
+        // help, and for these four it never would.
+        for id in ["homebrew", "containers", "simulators"] {
+            assert!(
+                scanner_estimates_size(id),
+                "`{id}` should be able to report a size"
+            );
+        }
+        for id in [
+            "python-caches",
+            "node-caches",
+            "rust-targets",
+            "cargo-cache",
+        ] {
+            assert!(
+                !scanner_estimates_size(id),
+                "`{id}` has no tool that reports a size"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unregistered_scanner_cannot_be_asked() {
+        assert!(!scanner_estimates_size("not-a-scanner"));
     }
 
     #[test]
