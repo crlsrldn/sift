@@ -55,9 +55,17 @@ rather than a feature. Use `sift explain <path>` to ask about any specific path.
 
 **Targets:** `~/Library/Developer/Xcode/DerivedData/*`
 
-**What it is.** Xcode build output: compiled objects, indexes, module caches. One directory per project.
+**What it is.** Xcode build output: compiled objects, indexes, module caches. Mostly one directory per project, named `<Project>-<hash>` — plus a handful of caches shared across every project.
 
-**How it decides.** Claimed when the directory is idle past the floor **and** nothing anywhere inside was touched in the last hour. `ModuleCache.noindex` under 1 GB is preserved — it is shared and expensive to rebuild.
+**How it decides.** Claimed when the directory is idle past the floor **and** nothing anywhere inside was touched in the last hour.
+
+A directory counts as a project only if it matches Xcode's `<Project>-<hash>` shape, where the hash is a long run of lowercase letters. Everything else is still reclaimed — nothing under `DerivedData` is irreplaceable — but reported for what it is rather than as a project. On Xcode 26.6 a first build creates three shared caches here:
+
+| | |
+|---|---|
+| `ModuleCache.noindex` | preserved under 1 GB — shared and expensive to rebuild |
+| `SDKStatCaches.noindex` | reclaimed; regenerated on next build |
+| `CompilationCache.noindex` | reclaimed; regenerated on next build |
 
 **What you lose.** A full rebuild of that project. Minutes, not data.
 
@@ -72,6 +80,8 @@ rather than a feature. Use `sift explain <path>` to ask about any specific path.
 **How it decides.** Eligible only when at least **two major versions** behind the newest present. The newest bundle is never touched. Directory names that do not parse as a version are skipped rather than guessed at.
 
 **What you lose.** Re-downloaded automatically on next device connect.
+
+> **Not verified against real data.** `DeviceSupport` bundles only appear once you attach a physical iPhone, Watch, or Apple TV, so this scanner has only ever run against fixtures — including the fixtures' assumption about how the directories are named. Every other Xcode scanner has now been checked against output from a real Xcode 26.6 build, and doing that turned up two naming bugs in `xcode-derived` alone. Treat S3 as the least-proven scanner here until someone runs it with a device attached.
 
 ## `xcode-archives`
 
@@ -94,6 +104,8 @@ rather than a feature. Use `sift explain <path>` to ask about any specific path.
 **What it is.** Simulator devices for runtimes you no longer have installed, and the dyld caches.
 
 **How it decides.** Devices are removed **only** through `simctl`. `CoreSimulator/Devices` is a hard deny — `simctl` keeps an index beside it and deleting by hand corrupts it.
+
+Because deletion is delegated, `scan` cannot measure the space without asking `simctl`, and `scan` spawns nothing by default (FR-1). The line therefore reads `unknown` rather than `0 B` until you pass `--estimate-delegated`, which sums `dataPathSize` over every device `simctl` reports as unavailable. Upgrading Xcode strands a whole runtime's devices at once — 403 MB across 22 devices on the machine this was measured on — so the difference is not academic.
 
 **What you lose.** Simulators are recreated on demand.
 

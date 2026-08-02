@@ -4,9 +4,27 @@
 //! asserts exact candidate set. **No scanner test touches a real home
 //! directory.**" These override `$HOME` so the scanners look inside a temp tree.
 //!
-//! This is also the *only* validation available for these scanners on the
-//! development machine, which has Command Line Tools but no Xcode — there is no
-//! `~/Library/Developer/Xcode` to check against.
+//! # These fixtures were once fiction, and it cost a bug
+//!
+//! For most of this project's life the development machine had Command Line
+//! Tools but no Xcode, so these fixtures were the *only* validation available
+//! and their shapes were invented rather than observed. Directory names like
+//! `Runyard-abcdef123` looked close enough.
+//!
+//! They were not close enough. When Xcode 26.6 was finally installed and a real
+//! build run, two things showed up immediately that no fixture had:
+//!
+//!   * real project hashes are 27-28 lowercase letters
+//!     (`AlphaTool-bnrexizhpwiunkdzsgqyyprefnxf`), not a short alphanumeric
+//!     stub — so the "is this a project?" check could be made far stricter
+//!     than a split on the last `-`;
+//!   * `DerivedData` contains *three* shared caches, not just the
+//!     `ModuleCache.noindex` the spec named. The other two were being reported
+//!     as though they were projects.
+//!
+//! The hashes below are now real ones. Where a fixture stands in for something
+//! that has never been observed on real hardware — every `DeviceSupport` test,
+//! since that needs a physical device — the test says so.
 
 use chrono::{Duration, Local};
 use filetime::FileTime;
@@ -94,7 +112,8 @@ fn age(path: &Path, days: i64) {
 fn derived_data_claims_an_idle_project() {
     let f = Fixture::new();
     aged_dir(
-        &f.xcode().join("DerivedData/Runyard-abcdef123"),
+        &f.xcode()
+            .join("DerivedData/Runyard-bnrexizhpwiunkdzsgqyyprefnxf"),
         200_000,
         31,
     );
@@ -104,13 +123,22 @@ fn derived_data_claims_an_idle_project() {
     assert_eq!(out[0].risk, Risk::Rebuildable);
     // Principle 6: name the project, not the hashed directory.
     assert!(out[0].label.contains("Runyard"), "{}", out[0].label);
-    assert!(!out[0].label.contains("abcdef123"), "{}", out[0].label);
+    assert!(
+        !out[0].label.contains("bnrexizhpwiunkdzsgqyyprefnxf"),
+        "{}",
+        out[0].label
+    );
 }
 
 #[test]
 fn derived_data_ignores_a_project_younger_than_the_floor() {
     let f = Fixture::new();
-    aged_dir(&f.xcode().join("DerivedData/Fresh-abc"), 200_000, 3);
+    aged_dir(
+        &f.xcode()
+            .join("DerivedData/Fresh-erwgyjswbxesebegqbdtqfjkgals"),
+        200_000,
+        3,
+    );
 
     let out = xcode::DerivedData.scan(&f.ctx()).unwrap();
     assert!(
@@ -125,7 +153,9 @@ fn derived_data_refuses_a_tree_touched_within_the_liveness_window() {
     // written — which is exactly what an active build looks like. Trusting the
     // directory mtime here would quarantine a running build.
     let f = Fixture::new();
-    let d = f.xcode().join("DerivedData/Building-abc");
+    let d = f
+        .xcode()
+        .join("DerivedData/Building-hqkxmvzptlnaobrcduweyfjgsix");
     aged_dir(&d, 200_000, 90);
 
     let live = d.join("Build/Intermediates/live.o");
@@ -165,7 +195,12 @@ fn a_small_module_cache_is_preserved() {
 #[test]
 fn derived_data_respects_a_configured_min_age() {
     let f = Fixture::new();
-    aged_dir(&f.xcode().join("DerivedData/Proj-abc"), 100_000, 20);
+    aged_dir(
+        &f.xcode()
+            .join("DerivedData/Proj-tmzwlkqxfehbnrdvycsgpioauj"),
+        100_000,
+        20,
+    );
 
     let strict = Config::parse("[scanners.xcode-derived]\nmin_age_days = 60\n").unwrap();
     assert!(xcode::DerivedData
@@ -177,6 +212,100 @@ fn derived_data_respects_a_configured_min_age() {
     assert_eq!(
         xcode::DerivedData.scan(&f.ctx_with(loose)).unwrap().len(),
         1
+    );
+}
+
+#[test]
+fn the_real_derived_data_layout_names_projects_and_caches_correctly() {
+    // The exact set of directories `xcodebuild build` produced on Xcode 26.6
+    // after building two SwiftPM executables from clean. Before this was
+    // observed, the fixtures held only `Name-hash` directories, and the three
+    // shared caches were reported as projects named after themselves —
+    // "DerivedData — SDKStatCaches.noindex" was the largest line in a real
+    // scan.
+    let f = Fixture::new();
+    let dd = f.xcode().join("DerivedData");
+    for name in [
+        "AlphaTool-bnrexizhpwiunkdzsgqyyprefnxf",
+        "BetaTool-erwgyjswbxesebegqbdtqfjkgals",
+        "CompilationCache.noindex",
+        "SDKStatCaches.noindex",
+    ] {
+        aged_dir(&dd.join(name), 100_000, 90);
+    }
+    // ModuleCache is the one the spec already knew about: shared, and small
+    // ones are preserved outright.
+    aged_dir(&dd.join("ModuleCache.noindex"), 50_000, 90);
+
+    let out = xcode::DerivedData.scan(&f.ctx()).unwrap();
+    let labels: Vec<&str> = out.iter().map(|c| c.label.as_str()).collect();
+
+    assert_eq!(
+        out.len(),
+        4,
+        "small ModuleCache must be preserved: {labels:#?}"
+    );
+
+    // The two real projects are named by project, never by hash.
+    assert!(
+        labels
+            .iter()
+            .any(|l| l.starts_with("DerivedData — AlphaTool (")),
+        "{labels:#?}"
+    );
+    assert!(
+        labels
+            .iter()
+            .any(|l| l.starts_with("DerivedData — BetaTool (")),
+        "{labels:#?}"
+    );
+
+    // The shared caches are still claimed — they are rebuildable — but nothing
+    // may present them as a project.
+    for cache in ["CompilationCache.noindex", "SDKStatCaches.noindex"] {
+        assert!(
+            labels.contains(&format!("Xcode shared cache — {cache}").as_str()),
+            "{cache} should be labelled a shared cache: {labels:#?}"
+        );
+    }
+    for l in &labels {
+        assert!(
+            !l.contains("DerivedData — SDKStatCaches"),
+            "a shared cache was reported as a project: {l}"
+        );
+        assert!(
+            !l.contains("DerivedData — CompilationCache"),
+            "a shared cache was reported as a project: {l}"
+        );
+    }
+    assert!(out.iter().all(|c| c.risk == Risk::Rebuildable));
+}
+
+#[test]
+fn an_unrecognised_derived_data_entry_is_claimed_without_inventing_a_project() {
+    // Xcode adds directories here between releases — three shared caches exist
+    // today where the spec named one. Something unrecognised must still be
+    // reclaimed (everything under DerivedData is rebuildable), but the label
+    // must not assert a project name that does not exist.
+    let f = Fixture::new();
+    aged_dir(
+        &f.xcode()
+            .join("DerivedData/SomethingXcode27Invents.noindex"),
+        100_000,
+        90,
+    );
+
+    let out = xcode::DerivedData.scan(&f.ctx()).unwrap();
+    assert_eq!(out.len(), 1, "{out:#?}");
+    assert!(
+        out[0].label.starts_with("Xcode build data — "),
+        "{}",
+        out[0].label
+    );
+    assert!(
+        !out[0].label.contains("DerivedData — "),
+        "must not claim to be a project: {}",
+        out[0].label
     );
 }
 
@@ -348,7 +477,11 @@ fn archives_produce_nothing_through_the_registry_at_default_risk() {
 #[test]
 fn the_registry_runs_all_three_xcode_scanners_without_error() {
     let f = Fixture::new();
-    aged_dir(&f.xcode().join("DerivedData/App-abc"), 300_000, 40);
+    aged_dir(
+        &f.xcode().join("DerivedData/App-vqnjdshfktbwrleoxmigcpuazy"),
+        300_000,
+        40,
+    );
     let ds = f.xcode().join("iOS DeviceSupport");
     aged_dir(&ds.join("18.1 (22B83)"), 100_000, 200);
     aged_dir(&ds.join("15.0 (19A346)"), 200_000, 200);

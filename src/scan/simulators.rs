@@ -28,6 +28,46 @@ pub fn is_simctl_owned(path: &Path) -> bool {
     path.to_string_lossy().contains(SIMCTL_OWNED)
 }
 
+/// Total `dataPathSize` of every device simctl reports as unavailable.
+///
+/// The figure comes from simctl rather than from walking
+/// `CoreSimulator/Devices` ourselves, for the same reason the deletion is
+/// delegated: simctl's plist index is the authority on which devices belong to
+/// an uninstalled runtime, and a directory listing is not.
+///
+/// Any failure — simctl missing, timing out, changing its JSON — yields 0,
+/// which the caller renders as "size unknown". Guessing a number here would be
+/// worse than admitting we do not have one (Principle 7).
+fn unavailable_bytes() -> u64 {
+    let out = crate::action::delegate::probe(
+        "xcrun",
+        &["simctl", "list", "devices", "--json"],
+        std::time::Duration::from_secs(30),
+    );
+    let stdout = match out {
+        crate::action::delegate::Outcome::Ok { stdout, .. } => stdout,
+        _ => return 0,
+    };
+    parse_unavailable_bytes(&stdout)
+}
+
+/// Sum `dataPathSize` over devices with `isAvailable == false`.
+fn parse_unavailable_bytes(json: &str) -> u64 {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return 0;
+    };
+    let Some(runtimes) = v.get("devices").and_then(|d| d.as_object()) else {
+        return 0;
+    };
+    runtimes
+        .values()
+        .filter_map(|devs| devs.as_array())
+        .flatten()
+        .filter(|d| d.get("isAvailable").and_then(|a| a.as_bool()) == Some(false))
+        .filter_map(|d| d.get("dataPathSize").and_then(|s| s.as_u64()))
+        .sum()
+}
+
 impl Scanner for Simulators {
     fn id(&self) -> &'static str {
         "simulators"
@@ -57,18 +97,36 @@ impl Scanner for Simulators {
         // `scan` spawns nothing (FR-1, M4). `simctl delete unavailable` is a
         // no-op when there are none.
         {
+            // Without --estimate-delegated this stays 0, exactly as the
+            // Homebrew and container scanners behave — and, as there, the
+            // reason has to say the figure is unknown rather than let a bare
+            // "0 B" read as "nothing to reclaim". On the machine this was first
+            // measured against, that silent zero was hiding 384 MB across 22
+            // devices from two uninstalled iOS runtimes.
+            let estimate = if ctx.estimate_delegated {
+                unavailable_bytes()
+            } else {
+                0
+            };
+
             out.push(Candidate {
                 scanner: self.id(),
                 target: Target::Delegated(DelegatedCmd::new(
                     "xcrun",
                     &["simctl", "delete", "unavailable"],
                 )),
-                bytes_on_disk: 0,
-                bytes_apparent: 0,
+                bytes_on_disk: estimate,
+                bytes_apparent: estimate,
                 last_modified: ctx.now,
                 risk: Risk::Rebuildable,
                 label: "Simulator devices for uninstalled runtimes".into(),
-                reason: "xcrun simctl delete unavailable; recreated on demand".into(),
+                reason: if estimate == 0 {
+                    "xcrun simctl delete unavailable; size unknown without \
+                     --estimate-delegated. Recreated on demand"
+                        .into()
+                } else {
+                    "xcrun simctl delete unavailable; recreated on demand".to_string()
+                },
             });
         }
 
@@ -138,5 +196,68 @@ mod tests {
     #[test]
     fn the_scanner_declares_its_tool_requirement() {
         assert_eq!(Simulators.requirements().tool, Some("xcrun"));
+    }
+
+    /// Trimmed from real `xcrun simctl list devices --json` output on
+    /// Xcode 26.6, keeping one available and two unavailable devices.
+    const REAL_SIMCTL_JSON: &str = r#"{
+      "devices" : {
+        "com.apple.CoreSimulator.SimRuntime.iOS-26-0" : [
+          {
+            "availabilityError" : "runtime profile not found using \"System\" match policy",
+            "dataPath" : "/Users/x/Library/Developer/CoreSimulator/Devices/76F9/data",
+            "dataPathSize" : 18337792,
+            "udid" : "76F92C4F-74A5-4DB7-BB15-A008CA85AA87",
+            "isAvailable" : false,
+            "state" : "Shutdown",
+            "name" : "iPhone 17 Pro"
+          },
+          {
+            "dataPathSize" : 1000000,
+            "udid" : "1BE8E420-4B16-43AF-8A9C-762A4F239EF6",
+            "isAvailable" : false,
+            "state" : "Shutdown",
+            "name" : "iPhone Air"
+          }
+        ],
+        "com.apple.CoreSimulator.SimRuntime.iOS-18-4" : [
+          {
+            "dataPathSize" : 999999999,
+            "udid" : "C4D3CC51-4637-4BF5-8FA2-CA18B9C9E9DA",
+            "isAvailable" : true,
+            "state" : "Shutdown",
+            "name" : "iPhone 16e"
+          }
+        ]
+      }
+    }"#;
+
+    #[test]
+    fn only_unavailable_devices_are_counted() {
+        // The available device is nearly a gigabyte. Counting it would report
+        // space that deleting unavailable runtimes cannot possibly free.
+        assert_eq!(
+            parse_unavailable_bytes(REAL_SIMCTL_JSON),
+            18337792 + 1000000
+        );
+    }
+
+    #[test]
+    fn unparseable_simctl_output_estimates_nothing() {
+        // Principle 7: a changed JSON shape must produce "unknown", never a
+        // number that happens to parse.
+        for bad in ["", "not json", "{}", r#"{"devices": null}"#, "[]"] {
+            assert_eq!(parse_unavailable_bytes(bad), 0, "`{bad}` should yield 0");
+        }
+    }
+
+    #[test]
+    fn a_device_missing_its_size_does_not_abort_the_sum() {
+        // Older simctl builds omit dataPathSize. The others still count.
+        let json = r#"{"devices":{"rt":[
+            {"isAvailable":false},
+            {"isAvailable":false,"dataPathSize":4096}
+        ]}}"#;
+        assert_eq!(parse_unavailable_bytes(json), 4096);
     }
 }

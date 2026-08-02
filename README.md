@@ -31,8 +31,16 @@ Volume: Macintosh HD  ·  32.2 GB free of 245.1 GB
 Run `sift clean` to quarantine. Nothing has been deleted.
 ```
 
+<sub>Illustrative — a well-used developer machine, not a capture from any
+particular one. The layout is exact; the numbers are what this is *for*.</sub>
+
 > **Status: pre-release.** Not yet signed or notarized, and not yet on a
 > Homebrew tap. Build from source.
+>
+> Every scanner but one has now been run against real data on macOS 26 with
+> Xcode 26.6. The exception is `xcode-devicesupport`, which needs a physical
+> iPhone attached before its directories exist at all — see
+> [docs/scanners.md](docs/scanners.md).
 
 ## Install
 
@@ -57,13 +65,28 @@ sift explain ~/Library/Caches   # what is this, and would sift touch it?
 sift clean --dry-run       # exactly what would happen, and nothing else
 sift clean                 # quarantine, with confirmation
 sift restore <run-id>      # undo
+sift purge                 # hard-delete quarantined items past their TTL
 
 sift install --dry-run     # the plist and launchctl command, unexecuted
 sift install               # daily at 03:00, low priority
 sift report                # history and trend
 ```
 
-`--json` works on every command.
+`--json` works on every command, and `--only <glob>` narrows `scan` and `clean`
+to matching scanners (`sift scan --only 'xcode-*'`).
+
+**`--estimate-delegated`.** Four scanners hand the work to the tool that owns
+it — `brew`, `docker`, `npm`, `simctl`. A plain `scan` never asks those tools
+anything, because it is not allowed to spawn subprocesses, so their lines read
+`unknown` rather than a number. Pass `--estimate-delegated` to `scan` or
+`clean` and sift asks each one what it would free:
+
+```bash
+sift scan --estimate-delegated
+```
+
+It costs a few seconds and lets those tools create their own cache
+directories, which is why it is not the default.
 
 ## What it will not do
 
@@ -123,10 +146,32 @@ FDA granted to Terminal covers interactive runs and does nothing for the
 scheduled agent, because launchd is that process's parent. `sift doctor`
 detects that specific mismatch and says so.
 
+## How this is tested
+
+540 tests, and two rules that matter more than the number.
+
+**A test that cannot fail is not a test.** Four separate safety tests in this
+repo were green while proving nothing — a fixture collision meant a guard test
+had never actually run, a containment check was skipping its own body, and the
+never-touch corpus was silently omitting the three most dangerous scanners.
+Every one was found by asking *"would this fail if the code were wrong?"*, not
+by the test failing. New safety tests are sabotage-checked against a
+deliberately broken implementation before they count.
+
+**Fixtures drift from reality.** These scanners were built against invented
+fixtures on a machine with no Xcode. The day a real Xcode went on and a real
+build ran, two naming bugs surfaced in the first scan — one of them printing a
+project that did not exist as the largest line in the report. Fixtures now use
+observed shapes, and anything still unverified against real hardware says so in
+[docs/scanners.md](docs/scanners.md).
+
+[CONTRIBUTING.md](CONTRIBUTING.md) has the details.
+
 ## Requirements
 
-macOS 13 Ventura or later (tested through macOS 26) · **Apple Silicon only** ·
-APFS.
+macOS 13 Ventura or later · **Apple Silicon only** · APFS.
+
+Developed and tested on macOS 26 with Xcode 26.6.
 
 ## License
 
