@@ -64,11 +64,20 @@ fn explain_deletes_nothing() {
     let dir = fixture();
     let before: Vec<PathBuf> = walkdir(dir.path());
 
-    for p in ["~/.ssh", "~/.cargo/registry/src", "~/Documents", "~/nonexistent"] {
+    for p in [
+        "~/.ssh",
+        "~/.cargo/registry/src",
+        "~/Documents",
+        "~/nonexistent",
+    ] {
         assert_eq!(explain(dir.path(), p).status.code(), Some(0));
     }
 
-    assert_eq!(before, walkdir(dir.path()), "explain modified the filesystem");
+    assert_eq!(
+        before,
+        walkdir(dir.path()),
+        "explain modified the filesystem"
+    );
 }
 
 fn walkdir(root: &std::path::Path) -> Vec<PathBuf> {

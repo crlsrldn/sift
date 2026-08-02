@@ -139,13 +139,17 @@ pub const KNOWN: &[Known] = &[
     },
     Known {
         suffix: "Library/Messages",
-        what: "Your iMessage history and its attachments.",
-        cost: "Your messages.",
+        what: "Your iMessage history and its attachments, including photos and \
+               videos people sent you that exist nowhere else.",
+        cost: "Every conversation on this Mac. If Messages in iCloud is off, \
+               this is the only copy and it is not in any backup you have not \
+               made yourself.",
         sift_policy: "Never claimed by any scanner.",
     },
     Known {
         suffix: ".ssh",
-        what: "SSH keys and known-hosts.",
+        what: "Your SSH private keys, public keys, known-hosts, and client \
+               configuration.",
         cost: "Access to every server and git remote those keys authenticate to.",
         sift_policy: "Never claimed. Part of the never-touch corpus that every \
                       scanner is tested against at maximum aggression.",
