@@ -2,48 +2,131 @@
 
 **An automated, safety-first disk reclamation agent for macOS.**
 
-macOS reports a large, opaque "System Data" bucket with no drill-down and no
-remedy. On a developer machine it is usually Xcode DerivedData, iOS DeviceSupport
-bundles, Rust `target/` directories, container images, and package-manager caches
-— individually invisible, collectively enormous.
+macOS reports a large, opaque "System Data" bucket in *Settings → General →
+Storage* with no drill-down and no remedy. On a developer's machine it is
+usually Xcode DerivedData, iOS DeviceSupport bundles, Rust `target/`
+directories, container images, and package-manager caches — individually
+invisible, collectively enormous.
 
-`sift` finds that space, tells you what it is in terms you recognize, and reclaims
-it on a schedule. Locally, without root, without telemetry, and reversibly.
+`sift` finds that space, tells you what it is in terms you recognise, and
+reclaims it on a schedule. Locally, without root, without telemetry, and
+reversibly.
 
-> **Status: pre-alpha.** This is the PR-01 scaffold. No scanning or deletion
-> capability is implemented yet. Do not install this expecting it to do anything.
+```
+sift — scan complete in 0.4s
+Volume: Macintosh HD  ·  32.2 GB free of 245.1 GB
 
-## Design commitments
+  Xcode                                                    31.7 GB
+    iOS DeviceSupport   iOS 15.x–16.x, 9 bundles           22.1 GB   rebuildable
+    DerivedData         14 projects, >14d idle              8.4 GB   rebuildable
+    Simulator caches                                        1.2 GB   safe
+  Rust                                                      9.3 GB
+    target/  6 projects under ~/dev, >30d idle              8.8 GB   rebuildable
 
-These are load-bearing, not aspirational. Each is enforced by tests.
+  Total identified                                         41.0 GB
 
-- **Allowlist, never blocklist.** A path is a deletion candidate only if a specific
-  scanner claims it by an explicit rule. There is no "scan everything and exclude
-  the dangerous bits" mode.
-- **Dry-run is the default.** `sift` with no arguments reports. It does not delete.
-- **Quarantine, then purge.** Deletions are staged by rename to a same-volume
-  quarantine directory — instant, zero additional bytes — and hard-deleted only
-  after a TTL. You get a window to notice a mistake, and `sift restore` to undo it.
-- **Age-gate everything.** Nothing younger than its scanner's minimum age is ever
-  eligible, regardless of size.
-- **Delegate to the owner tool.** `brew cleanup`, `docker prune`, and
-  `simctl delete unavailable` know their own invariants better than we do.
-- **No root, ever.** No privileged helper, no daemon. This eliminates the attack
-  surface that defines the commercial cleaner products.
-- **No network.** Zero outbound connections, enforced in CI by a dependency audit
-  that fails the build if any transitive HTTP or TLS dependency appears.
+  Skipped: snapshots, trash (disabled)
+  Blocked: mail-downloads — needs Full Disk Access (run `sift doctor`)
+
+Run `sift clean` to quarantine. Nothing has been deleted.
+```
+
+> **Status: pre-release.** Not yet signed or notarized, and not yet on a
+> Homebrew tap. Build from source.
+
+## Install
+
+```bash
+git clone https://github.com/crlsrldn/sift && cd sift
+cargo build --release
+cp target/release/sift ~/.local/bin/sift    # copy, not symlink — see below
+```
+
+**Copy rather than symlink.** `sift install` records the binary's *canonical*
+path in the LaunchAgent, so installing through a symlink would point launchd at
+`target/release/sift` — and `cargo clean` would then break your scheduled run
+silently. `sift install` refuses to schedule a build artifact for this reason.
+
+## Use
+
+```bash
+sift                       # report. deletes nothing.
+sift doctor                # permissions, tools, per-scanner status
+sift explain ~/Library/Caches   # what is this, and would sift touch it?
+
+sift clean --dry-run       # exactly what would happen, and nothing else
+sift clean                 # quarantine, with confirmation
+sift restore <run-id>      # undo
+
+sift install --dry-run     # the plist and launchctl command, unexecuted
+sift install               # daily at 03:00, low priority
+sift report                # history and trend
+```
+
+`--json` works on every command.
+
+## What it will not do
+
+- **Run as root.** No privileged helper, no daemon.
+- **Touch the network.** Enforced in CI by a dependency audit that fails the
+  build if any HTTP or TLS crate reaches the binary.
+- **Delete anything you did not ask about.** A path is a candidate only because
+  a scanner claimed it by an explicit rule. There is no "scan everything and
+  exclude the dangerous bits" mode.
+- **Delete anything irreversibly without saying so first**, and for the five
+  destructive scanners, without two config switches *and* you typing the
+  scanner's name.
+
+Everything is staged by `rename(2)` into a quarantine on the same volume — zero
+additional bytes — and hard-deleted only after a TTL, by default seven days.
+
+## `sift explain`
+
+The most direct answer to "what is all this?":
+
+```
+$ sift explain '~/Library/Mobile Documents'
+/Users/you/Library/Mobile Documents
+
+  size        40.7 GB
+  what        iCloud Drive. Everything in your iCloud Drive and any app that
+              syncs through it — Desktop and Documents too, if you enabled that.
+
+  if deleted  Deleting from here deletes it from iCloud, and therefore from
+              every device signed into your account.
+
+  VERDICT     No scanner claims this, under any configuration.
+              sift will never delete it. If it is large and you
+              want it gone, that is a decision only you can make.
+```
+
+## Documentation
+
+| | |
+|---|---|
+| [docs/scanners.md](docs/scanners.md) | All 17 scanners: what each targets, how it decides, what you lose |
+| [docs/safety.md](docs/safety.md) | How deletion decisions are made, and what sift is bad at |
+| [docs/config.md](docs/config.md) | Annotated configuration reference |
+| [docs/verifying-fda.md](docs/verifying-fda.md) | Checking the Full Disk Access path by hand |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | The fixture-before-fix rule, and why a green test can be worthless |
+
+## Full Disk Access
+
+Four scanners need it. Grant it to **the sift binary itself**, not to Terminal:
+
+```
+System Settings → Privacy & Security → Full Disk Access → +  →  ⌘⇧G
+~/.local/bin/sift
+```
+
+FDA granted to Terminal covers interactive runs and does nothing for the
+scheduled agent, because launchd is that process's parent. `sift doctor`
+detects that specific mismatch and says so.
 
 ## Requirements
 
-- macOS 13 Ventura or later, tested through macOS 26
-- **Apple Silicon only.** Intel Macs are not supported.
-- APFS (HFS+ volumes are detected and skipped)
-
-## Building
-
-```bash
-cargo build --release
-```
+macOS 13 Ventura or later (tested through macOS 26) · **Apple Silicon only** ·
+APFS.
 
 ## License
 
