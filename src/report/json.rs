@@ -47,6 +47,25 @@ pub fn scan_report(report: &ScanReport, ctx: &ScanCtx) -> serde_json::Value {
             "last_modified": c.last_modified.to_rfc3339(),
             "age_days": c.age_days(ctx.now),
         })).collect::<Vec<_>>(),
+        // Kept out of `candidates` and out of `total_bytes` on purpose: an
+        // automated consumer that acted on this list would be acting on
+        // scanners the user switched off. Present only under
+        // --include-disabled, and always empty otherwise.
+        "disabled_total_bytes": report.disabled_bytes(),
+        "disabled_candidates": report.disabled_candidates.iter().map(|c| serde_json::json!({
+            "scanner": c.scanner,
+            "target": c.target.display(),
+            "reversible": c.target.is_reversible(),
+            "bytes_on_disk": c.bytes_on_disk,
+            "bytes_apparent": c.bytes_apparent,
+            "bytes_are_estimate": true,
+            "risk": c.risk.as_str(),
+            "label": c.label,
+            "reason": c.reason,
+            "last_modified": c.last_modified.to_rfc3339(),
+            "age_days": c.age_days(ctx.now),
+            "actionable": false,
+        })).collect::<Vec<_>>(),
         "skipped": report.skipped.iter().map(|(id, why)| serde_json::json!({
             "scanner": id,
             "reason": why.describe(),

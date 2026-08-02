@@ -85,6 +85,22 @@ accept more:
 
 Using one of these on the wrong scanner is an error, not a silent no-op.
 
+### `enabled = false` means "never act", not "never look"
+
+Switching a scanner off keeps `clean` away from it permanently. By default it
+also drops out of `scan`, which is usually what you want and occasionally
+hides something you needed to know — disabling the delegated scanners to keep
+a nightly run reversible should not cost you the ability to see what they
+hold.
+
+`sift scan --include-disabled` reports them in a separate block with its own
+total, excluded from `Total identified`. Nothing about `clean` changes: the
+findings are kept in a field no actioning path reads, and the flag does not
+exist on `clean` at all.
+
+It overrides `enabled` only. A scanner above your `max_risk` ceiling stays
+unrun either way — that is a separate decision, described below.
+
 ## Arming a destructive scanner
 
 Two switches, both required:

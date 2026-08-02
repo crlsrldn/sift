@@ -47,6 +47,19 @@ pub struct ScanCtx {
     /// those tools create their own cache directories — a side effect FR-1
     /// forbids. `--estimate-delegated` opts into both costs knowingly.
     pub estimate_delegated: bool,
+    /// Whether scanners switched off in config should still be *reported*.
+    ///
+    /// `enabled = false` was doing two unrelated jobs: "never act on this" and
+    /// "never tell me about this". Only the first is what anyone sets it for.
+    /// A user who disables the delegated scanners to keep the nightly run
+    /// reversible should not thereby lose the ability to see what they hold —
+    /// and since `scan` never acts (Principle 2), looking costs nothing.
+    ///
+    /// This overrides the `enabled` gate **only**. `max_risk` is a separate
+    /// axis with its own meaning, and a risk-gated scanner stays skipped and
+    /// says so. Anything found this way lands in
+    /// [`ScanReport::disabled_candidates`], never in the actionable set.
+    pub include_disabled: bool,
 }
 
 impl ScanCtx {
@@ -63,12 +76,19 @@ impl ScanCtx {
             caps,
             excludes,
             estimate_delegated: false,
+            include_disabled: false,
         })
     }
 
     /// Opt into spawning delegated tools for size estimates.
     pub fn with_delegated_estimates(mut self, yes: bool) -> Self {
         self.estimate_delegated = yes;
+        self
+    }
+
+    /// Opt into reporting scanners that config has switched off.
+    pub fn with_disabled_included(mut self, yes: bool) -> Self {
+        self.include_disabled = yes;
         self
     }
 
@@ -250,6 +270,15 @@ pub trait Scanner: Send + Sync {
 #[derive(Debug, Default)]
 pub struct ScanReport {
     pub candidates: Vec<Candidate>,
+    /// What scanners disabled in config would have claimed, found only when
+    /// `--include-disabled` was given.
+    ///
+    /// **A separate field, deliberately.** These must never be actioned, and
+    /// the way to guarantee that is to keep them out of the collection every
+    /// actioning path reads, rather than to remember a flag check at each one.
+    /// `clean`, the filter chain, and quarantine all consume `candidates`;
+    /// none of them can reach this by accident.
+    pub disabled_candidates: Vec<Candidate>,
     pub errors: Vec<(&'static str, String)>,
     pub skipped: Vec<(&'static str, SkippedScanner)>,
     pub duration: std::time::Duration,
@@ -270,6 +299,26 @@ impl ScanReport {
             *m.entry(c.scanner).or_insert(0) += c.bytes_on_disk;
         }
         m
+    }
+
+    /// Bytes held by scanners that are switched off.
+    ///
+    /// Kept out of [`total_bytes`](Self::total_bytes) on purpose: that figure
+    /// answers "what would `sift clean` reclaim?", and the answer for a
+    /// disabled scanner is nothing.
+    pub fn disabled_bytes(&self) -> u64 {
+        self.disabled_candidates
+            .iter()
+            .map(|c| c.bytes_on_disk)
+            .sum()
+    }
+
+    /// Which disabled scanners reported something, in report order.
+    pub fn disabled_scanners(&self) -> Vec<&'static str> {
+        let mut ids: Vec<&'static str> =
+            self.disabled_candidates.iter().map(|c| c.scanner).collect();
+        ids.dedup();
+        ids
     }
 
     pub fn had_errors(&self) -> bool {
@@ -342,6 +391,7 @@ impl Registry {
         for outcome in outcomes {
             match outcome {
                 Outcome::Found(mut c) => report.candidates.append(&mut c),
+                Outcome::FoundDisabled(mut c) => report.disabled_candidates.append(&mut c),
                 Outcome::Skipped(id, why) => report.skipped.push((id, why)),
                 Outcome::Failed(id, msg) => report.errors.push((id, msg)),
             }
@@ -351,6 +401,9 @@ impl Registry {
         // and the answer is almost always the first two lines.
         report
             .candidates
+            .sort_by_key(|c| std::cmp::Reverse(c.bytes_on_disk));
+        report
+            .disabled_candidates
             .sort_by_key(|c| std::cmp::Reverse(c.bytes_on_disk));
         report.duration = start.elapsed();
         report
@@ -365,6 +418,9 @@ impl Default for Registry {
 
 enum Outcome {
     Found(Vec<Candidate>),
+    /// Ran only because `--include-disabled` asked. Reportable, never
+    /// actionable.
+    FoundDisabled(Vec<Candidate>),
     Skipped(&'static str, SkippedScanner),
     Failed(&'static str, String),
 }
@@ -377,15 +433,29 @@ fn run_one(s: &dyn Scanner, ctx: &ScanCtx) -> Outcome {
     let Some(cfg) = ctx.config.scanner(id) else {
         return Outcome::Skipped(id, SkippedScanner::NothingToDo("not configured".into()));
     };
-    if !cfg.enabled {
+    // `enabled = false` means "never act on this". Whether it also means
+    // "never look" is the caller's choice: `scan` can ask for these to be
+    // reported, and what comes back is quarantined into a field no actioning
+    // path reads. The risk gate below still applies — that is a different axis
+    // and this flag does not touch it.
+    let disabled = !cfg.enabled;
+    if disabled && !ctx.include_disabled {
         return Outcome::Skipped(id, SkippedScanner::Disabled);
     }
     if cfg.risk > ctx.config.general.max_risk {
+        // A scanner that is *also* switched off is reported as switched off.
+        // That is the state the user actually set, and `RiskGated`'s message
+        // says the scanner is enabled — which would be a lie here, since only
+        // `--include-disabled` let a disabled scanner reach this gate at all.
         return Outcome::Skipped(
             id,
-            SkippedScanner::RiskGated {
-                risk: cfg.risk,
-                max: ctx.config.general.max_risk,
+            if disabled {
+                SkippedScanner::Disabled
+            } else {
+                SkippedScanner::RiskGated {
+                    risk: cfg.risk,
+                    max: ctx.config.general.max_risk,
+                }
             },
         );
     }
@@ -418,6 +488,7 @@ fn run_one(s: &dyn Scanner, ctx: &ScanCtx) -> Outcome {
             id,
             SkippedScanner::NothingToDo("ran; nothing eligible".into()),
         ),
+        Ok(Ok(candidates)) if disabled => Outcome::FoundDisabled(candidates),
         Ok(Ok(candidates)) => Outcome::Found(candidates),
         Ok(Err(e)) => {
             tracing::warn!(scanner = id, error = %e, "scanner failed");
@@ -598,6 +669,127 @@ mod tests {
 
         assert!(report.candidates.is_empty());
         assert!(report.errors.is_empty(), "it must not even be invoked");
+        assert!(matches!(
+            report.skipped[0].1,
+            SkippedScanner::RiskGated { .. }
+        ));
+    }
+
+    /// A disabled scanner that would claim something, if anyone let it.
+    struct DisabledFinder;
+    impl Scanner for DisabledFinder {
+        fn id(&self) -> &'static str {
+            "homebrew"
+        }
+        fn scan(&self, ctx: &ScanCtx) -> std::result::Result<Vec<Candidate>, ScannerError> {
+            Ok(vec![Candidate {
+                scanner: "homebrew",
+                target: Target::Path("/tmp/disabled-thing".into()),
+                bytes_on_disk: 5000,
+                bytes_apparent: 5000,
+                last_modified: ctx.now,
+                risk: Risk::Safe,
+                label: "disabled finding".into(),
+                reason: "test".into(),
+            }])
+        }
+    }
+
+    #[test]
+    fn a_disabled_scanner_does_not_run_by_default() {
+        let cfg = Config::parse("[scanners.homebrew]\nenabled = false\n").unwrap();
+        let r = Registry::new().with(Box::new(DisabledFinder));
+        let report = r.run(&ctx_with(cfg), None);
+
+        assert!(report.candidates.is_empty());
+        assert!(
+            report.disabled_candidates.is_empty(),
+            "nobody asked to look"
+        );
+        assert!(matches!(report.skipped[0].1, SkippedScanner::Disabled));
+    }
+
+    #[test]
+    fn include_disabled_reports_but_never_makes_actionable() {
+        // The whole point of the flag, and the whole risk of it. `enabled =
+        // false` must keep meaning "never act" even while it stops meaning
+        // "never look".
+        let cfg = Config::parse("[scanners.homebrew]\nenabled = false\n").unwrap();
+        let r = Registry::new().with(Box::new(DisabledFinder));
+        let report = r.run(&ctx_with(cfg).with_disabled_included(true), None);
+
+        // Reported...
+        assert_eq!(report.disabled_candidates.len(), 1);
+        assert_eq!(report.disabled_bytes(), 5000);
+        assert_eq!(report.disabled_scanners(), vec!["homebrew"]);
+
+        // ...and unreachable by anything that acts. `clean` consumes
+        // `candidates` and `total_bytes`; both must be untouched.
+        assert!(
+            report.candidates.is_empty(),
+            "a disabled scanner's findings must never enter the actionable set"
+        );
+        assert_eq!(
+            report.total_bytes(),
+            0,
+            "disabled bytes must not inflate the figure that describes what clean would do"
+        );
+        assert!(report.bytes_by_scanner().is_empty());
+        assert!(report.by_scanner("homebrew").is_empty());
+    }
+
+    #[test]
+    fn include_disabled_does_not_override_the_risk_gate() {
+        // The flag overrides one gate, not all of them. A destructive scanner
+        // stays unrun whichever way `enabled` is set.
+        struct DestructiveDisabled;
+        impl Scanner for DestructiveDisabled {
+            fn id(&self) -> &'static str {
+                "trash"
+            }
+            fn scan(&self, _: &ScanCtx) -> std::result::Result<Vec<Candidate>, ScannerError> {
+                panic!("must never be called")
+            }
+        }
+
+        let cfg = Config::parse("[scanners.trash]\nenabled = false\n").unwrap();
+        let r = Registry::new().with(Box::new(DestructiveDisabled));
+        let report = r.run(&ctx_with(cfg).with_disabled_included(true), None);
+
+        assert!(report.disabled_candidates.is_empty());
+        assert!(report.errors.is_empty(), "it must not even be invoked");
+    }
+
+    #[test]
+    fn a_disabled_and_risk_gated_scanner_is_reported_as_disabled() {
+        // `RiskGated`'s rendering tells the user the scanner is enabled and
+        // only the tier is unarmed. For a scanner that is *also* switched off
+        // that would be false — and only --include-disabled lets one reach
+        // this gate at all.
+        struct DestructiveDisabled;
+        impl Scanner for DestructiveDisabled {
+            fn id(&self) -> &'static str {
+                "trash"
+            }
+            fn scan(&self, _: &ScanCtx) -> std::result::Result<Vec<Candidate>, ScannerError> {
+                panic!("must never be called")
+            }
+        }
+
+        let cfg = Config::parse("[scanners.trash]\nenabled = false\n").unwrap();
+        let r = Registry::new().with(Box::new(DestructiveDisabled));
+        let report = r.run(&ctx_with(cfg).with_disabled_included(true), None);
+
+        assert!(
+            matches!(report.skipped[0].1, SkippedScanner::Disabled),
+            "got {:?}",
+            report.skipped[0].1
+        );
+
+        // ...while an enabled one above the ceiling still reports the tier.
+        let cfg = Config::parse("[scanners.trash]\nenabled = true\n").unwrap();
+        let r = Registry::new().with(Box::new(DestructiveDisabled));
+        let report = r.run(&ctx_with(cfg).with_disabled_included(true), None);
         assert!(matches!(
             report.skipped[0].1,
             SkippedScanner::RiskGated { .. }

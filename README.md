@@ -88,6 +88,23 @@ sift scan --estimate-delegated
 It costs a few seconds and lets those tools create their own cache
 directories, which is why it is not the default.
 
+**`--include-disabled`.** `enabled = false` was doing two unrelated jobs:
+*never act on this*, which is why people set it, and *never tell me about
+this*, which nobody chose. Disabling the delegated scanners to keep a nightly
+run reversible should not also cost you the ability to see what they hold:
+
+```bash
+sift scan --include-disabled
+```
+
+Switched-off scanners are reported in their own block, with their own total,
+excluded from `Total identified` — and `clean` still ignores them entirely.
+`scan` never acts, so looking is free. The flag exists on `scan` alone; there
+is no argument that turns a disabled scanner into a deletion.
+
+It overrides the `enabled` switch only. A scanner above your `max_risk`
+ceiling stays unrun and says so, because that is a separate decision.
+
 ## What it will not do
 
 - **Run as root.** No privileged helper, no daemon.

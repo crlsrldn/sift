@@ -111,6 +111,14 @@ pub struct ScanArgs {
     /// With it, delegated lines carry a real figure instead of "unknown".
     #[arg(long)]
     pub estimate_delegated: bool,
+
+    /// Also report scanners switched off in config.
+    ///
+    /// Shows what they hold without arming them. `scan` never acts, so this
+    /// only affects what you are told; `clean` ignores these entirely whether
+    /// or not the flag was given.
+    #[arg(long)]
+    pub include_disabled: bool,
 }
 
 #[derive(Debug, Args)]
@@ -184,6 +192,7 @@ impl Cli {
         let command = self.command.unwrap_or(Command::Scan(ScanArgs {
             only: None,
             estimate_delegated: false,
+            include_disabled: false,
         }));
         (command, global)
     }
@@ -294,6 +303,35 @@ mod tests {
             cli.effective_command().0,
             Command::Config(ConfigCommand::Check)
         ));
+    }
+
+    #[test]
+    fn include_disabled_exists_on_scan_and_nowhere_else() {
+        // Deliberately scan-only. `clean` has no way to be handed a context
+        // that reports disabled scanners, so there is no argument the user
+        // could pass — or a script could inherit — that turns a switched-off
+        // scanner into a deletion.
+        let cli = Cli::parse_from(["sift", "scan", "--include-disabled"]);
+        match cli.effective_command().0 {
+            Command::Scan(a) => assert!(a.include_disabled),
+            other => panic!("expected scan, got {other:?}"),
+        }
+
+        assert!(
+            Cli::try_parse_from(["sift", "clean", "--include-disabled"]).is_err(),
+            "clean must not accept --include-disabled"
+        );
+    }
+
+    #[test]
+    fn include_disabled_is_off_unless_asked_for() {
+        for args in [vec!["sift"], vec!["sift", "scan"]] {
+            let cli = Cli::parse_from(&args);
+            match cli.effective_command().0 {
+                Command::Scan(a) => assert!(!a.include_disabled, "failed for {args:?}"),
+                other => panic!("expected scan, got {other:?}"),
+            }
+        }
     }
 
     #[test]

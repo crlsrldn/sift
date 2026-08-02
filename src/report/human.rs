@@ -87,12 +87,24 @@ pub fn render(report: &ScanReport, ctx: &ScanCtx) -> String {
             let _ = writeln!(o);
             let _ = writeln!(
                 o,
-                "  {unknown} line(s) show `unknown` and are not in that total.\n  \
-                 Re-run with --estimate-delegated to ask those tools for a figure."
+                "  {unknown} line(s) show `unknown` and are not in that total."
+            );
+            // Telling someone to pass a flag they just passed is worse than
+            // saying nothing: it implies the number is retrievable when the
+            // tool has already been asked and had no answer.
+            let _ = writeln!(
+                o,
+                "  {}",
+                if ctx.estimate_delegated {
+                    "Those tools were asked, and did not report one."
+                } else {
+                    "Re-run with --estimate-delegated to ask those tools for a figure."
+                }
             );
         }
     }
 
+    render_disabled(&mut o, report);
     render_skipped_and_blocked(&mut o, report);
     render_errors(&mut o, report);
 
@@ -209,6 +221,53 @@ fn truncate(s: &str, max: usize) -> String {
     }
     let keep: String = s.chars().take(max - 1).collect();
     format!("{keep}…")
+}
+
+/// What the disabled scanners hold — shown only under `--include-disabled`.
+///
+/// Set apart from the main body, with its own total, and never folded into
+/// "Total identified": `clean` will not touch any of it, and a reader who
+/// added the two figures together would be told the wrong number.
+fn render_disabled(o: &mut String, report: &ScanReport) {
+    if report.disabled_candidates.is_empty() {
+        return;
+    }
+
+    let _ = writeln!(o);
+    let _ = writeln!(o, "  Disabled in config — not counted above, and `clean`");
+    let _ = writeln!(o, "  will not touch these:");
+    let _ = writeln!(o);
+
+    for c in &report.disabled_candidates {
+        let _ = write_row(o, 4, &c.label, &candidate_size(c), c.risk.as_str());
+    }
+
+    let _ = writeln!(o);
+    let _ = write_row(
+        o,
+        4,
+        "Held by disabled scanners",
+        &size(report.disabled_bytes()),
+        "",
+    );
+    let _ = writeln!(o);
+    let _ = writeln!(
+        o,
+        "  Enable in {}: {}",
+        crate::paths::config_file()
+            .map(|p| tildify(&p))
+            .unwrap_or_else(|_| "your config".into()),
+        report.disabled_scanners().join(", ")
+    );
+}
+
+/// `/Users/you/x` -> `~/x`, so a path fits the report width.
+fn tildify(p: &std::path::Path) -> String {
+    let s = p.display().to_string();
+    match std::env::var("HOME") {
+        Ok(h) if !h.is_empty() && s.starts_with(&h) => s.replacen(&h, "~", 1),
+        _ => s,
+    }
 }
 
 fn render_skipped_and_blocked(o: &mut String, report: &ScanReport) {

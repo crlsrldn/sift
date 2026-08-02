@@ -17,6 +17,7 @@ pub fn run(
     cfg: &Config,
     only: Option<&str>,
     estimate_delegated: bool,
+    include_disabled: bool,
     json_out: bool,
 ) -> Result<()> {
     let filter = only.map(only_filter).transpose()?;
@@ -25,7 +26,10 @@ pub fn run(
         volume::root()?,
         Capabilities::probe(),
     )?
-    .with_delegated_estimates(estimate_delegated);
+    .with_delegated_estimates(estimate_delegated)
+    // `scan` only. `clean` never constructs a context with this set, so a
+    // disabled scanner has no route to being actioned.
+    .with_disabled_included(include_disabled);
 
     let registry = crate::scan::registry();
     let report = registry.run(&ctx, filter.as_ref());
