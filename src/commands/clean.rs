@@ -107,6 +107,25 @@ pub fn run(
     }
 
     if filtered.accepted.is_empty() {
+        // FR-8. This used to return without recording anything, which made the
+        // healthiest possible outcome the one nothing could see: an agent that
+        // ran at 03:00, scanned correctly, and found nothing eligible left the
+        // history untouched, so `sift report` could not tell "ran and found
+        // nothing" from "never ran" — the exact distinction this tool insists
+        // on everywhere else.
+        //
+        // A quiet night is also not necessarily an idle one: `purge_expired`
+        // has already run by this point, so a TTL expiry reaching its seventh
+        // day on a night with nothing new to stage was reclaiming real bytes
+        // and reporting them to a log file only.
+        if !dry_run {
+            let mut record = history::RunRecord::from_scan(&report, &ctx, "clean");
+            record.purged_bytes = purged.as_ref().map(|p| p.bytes_purged).unwrap_or(0);
+            if let Err(e) = history::append(&record) {
+                tracing::warn!(error = %e, "could not append to run history");
+            }
+        }
+
         if !json {
             println!("sift — nothing to clean.");
             if let Some(p) = &purged {
