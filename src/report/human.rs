@@ -72,6 +72,25 @@ pub fn render(report: &ScanReport, ctx: &ScanCtx) -> String {
             &size(report.total_bytes()),
             "",
         );
+
+        // The total sums measured bytes, so every unknown delegated line is
+        // missing from it. Saying so is the difference between an undercount
+        // and a wrong number (G7).
+        let unknown = report
+            .candidates
+            .iter()
+            .filter(|c| {
+                c.bytes_on_disk == 0 && matches!(c.target, crate::scan::Target::Delegated(_))
+            })
+            .count();
+        if unknown > 0 {
+            let _ = writeln!(o);
+            let _ = writeln!(
+                o,
+                "  {unknown} line(s) show `unknown` and are not in that total.\n  \
+                 Re-run with --estimate-delegated to ask those tools for a figure."
+            );
+        }
     }
 
     render_skipped_and_blocked(&mut o, report);
@@ -123,9 +142,27 @@ fn render_families(o: &mut String, report: &ScanReport) {
         for c in candidates {
             // The risk tier is always visible (PRD §7 design intent) — it is
             // the difference between "this regenerates" and "this is gone".
-            let _ = write_row(o, 4, &c.label, &size(c.bytes_on_disk), c.risk.as_str());
+            let _ = write_row(o, 4, &c.label, &candidate_size(c), c.risk.as_str());
         }
     }
+}
+
+/// The size column for one candidate.
+///
+/// A delegated candidate carries 0 bytes when nobody asked the other tool how
+/// much it would free (`--estimate-delegated` is off by default, because
+/// asking costs subprocesses that `scan` is not allowed to spawn). Printing
+/// that as "0 B" states the opposite of what is true: it reads as "nothing to
+/// reclaim here" when the honest answer is "we did not ask". On the machine
+/// this was found on, a bare "0 B" was standing in for 403 MB.
+///
+/// A path candidate measuring 0 is a different thing — that is a real,
+/// measured zero — but such candidates are dropped before they reach here.
+fn candidate_size(c: &crate::scan::Candidate) -> String {
+    if c.bytes_on_disk == 0 && matches!(c.target, crate::scan::Target::Delegated(_)) {
+        return "unknown".to_string();
+    }
+    size(c.bytes_on_disk)
 }
 
 /// One report line: `<indent><label><dots><size>  <risk>`.
@@ -177,26 +214,51 @@ fn truncate(s: &str, max: usize) -> String {
 fn render_skipped_and_blocked(o: &mut String, report: &ScanReport) {
     // PRD §7: surfaced rather than silently omitted. This is the G7 honesty
     // differentiator against the commercial cleaners.
+    // Disabled and risk-gated are different problems with different fixes, and
+    // collapsing them sent users to the wrong config key: a scanner the user
+    // had explicitly set `enabled = true` was still reported as "(disabled)",
+    // when what actually held it back was the `max_risk` ceiling.
     let disabled: Vec<&str> = report
         .skipped
         .iter()
-        .filter(|(_, s)| {
-            matches!(
-                s,
-                SkippedScanner::Disabled | SkippedScanner::RiskGated { .. }
-            )
-        })
+        .filter(|(_, s)| matches!(s, SkippedScanner::Disabled))
         .map(|(id, _)| *id)
         .collect();
+
+    let risk_gated: Vec<(&str, &str)> = report
+        .skipped
+        .iter()
+        .filter_map(|(id, s)| match s {
+            SkippedScanner::RiskGated { risk, .. } => Some((*id, risk.as_str())),
+            _ => None,
+        })
+        .collect();
+
+    let any_skipped = !disabled.is_empty() || !risk_gated.is_empty();
 
     if !disabled.is_empty() {
         let _ = writeln!(o);
         let _ = writeln!(o, "  Skipped: {} (disabled)", disabled.join(", "));
     }
 
+    if !risk_gated.is_empty() {
+        if disabled.is_empty() {
+            let _ = writeln!(o);
+        }
+        let names: Vec<&str> = risk_gated.iter().map(|(id, _)| *id).collect();
+        // Every risk-gated scanner in a single run is held back by the same
+        // ceiling, so the tier is named once.
+        let tier = risk_gated[0].1;
+        let _ = writeln!(
+            o,
+            "  Skipped: {} — {tier}, above max_risk (enabled, but the tier is not armed)",
+            names.join(", ")
+        );
+    }
+
     let blocked = report.blocked();
     if !blocked.is_empty() {
-        if disabled.is_empty() {
+        if !any_skipped {
             let _ = writeln!(o);
         }
         for (id, why) in blocked {

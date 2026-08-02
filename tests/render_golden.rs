@@ -211,6 +211,112 @@ fn an_empty_result_with_blocked_scanners_says_why() {
 }
 
 #[test]
+fn a_risk_gated_scanner_is_not_reported_as_disabled() {
+    // These two were rendered identically as "(disabled)". A user who had set
+    // `enabled = true` and was still told "disabled" would go back to the
+    // `enabled` key — which was already correct — instead of to `max_risk`,
+    // which is what actually held the scanner back.
+    let r = ScanReport {
+        duration: std::time::Duration::from_millis(40),
+        skipped: vec![
+            ("trash", SkippedScanner::Disabled),
+            (
+                "xcode-archives",
+                SkippedScanner::RiskGated {
+                    risk: Risk::Destructive,
+                    max: Risk::Rebuildable,
+                },
+            ),
+        ],
+        ..Default::default()
+    };
+    let out = human::render(&r, &ctx());
+
+    // The genuinely disabled one still says so.
+    assert!(
+        out.lines()
+            .any(|l| l.contains("trash") && l.contains("(disabled)")),
+        "{out}"
+    );
+    // The risk-gated one names the tier, and never the word "disabled".
+    let gated = out
+        .lines()
+        .find(|l| l.contains("xcode-archives"))
+        .unwrap_or_else(|| panic!("{out}"));
+    assert!(gated.contains("destructive"), "{gated}");
+    assert!(gated.contains("max_risk"), "{gated}");
+    assert!(
+        !gated.contains("disabled"),
+        "a scanner the user enabled must not be called disabled: {gated}"
+    );
+}
+
+#[test]
+fn a_delegated_candidate_with_no_estimate_reads_as_unknown_not_zero() {
+    // `--estimate-delegated` is off by default, so delegated candidates carry
+    // 0 bytes. Rendering that as "0 B" asserts the opposite of the truth: on a
+    // real machine that "0 B" stood in for 403 MB of simulator devices from two
+    // uninstalled iOS runtimes.
+    let mut r = ScanReport {
+        duration: std::time::Duration::from_millis(40),
+        ..Default::default()
+    };
+    r.candidates = vec![Candidate {
+        scanner: "simulators",
+        target: Target::Delegated(sift::scan::DelegatedCmd::new(
+            "xcrun",
+            &["simctl", "delete", "unavailable"],
+        )),
+        bytes_on_disk: 0,
+        bytes_apparent: 0,
+        last_modified: Local::now(),
+        risk: Risk::Rebuildable,
+        label: "Simulator devices for uninstalled runtimes".into(),
+        reason: "xcrun simctl delete unavailable".into(),
+    }];
+
+    let out = human::render(&r, &ctx());
+    let line = out
+        .lines()
+        .find(|l| l.contains("Simulator devices"))
+        .unwrap_or_else(|| panic!("{out}"));
+    assert!(line.contains("unknown"), "{line}");
+    assert!(!line.contains("0 B"), "{line}");
+
+    // And the total must admit that the line is missing from it.
+    assert!(out.contains("not in that total"), "{out}");
+    assert!(out.contains("--estimate-delegated"), "{out}");
+}
+
+#[test]
+fn a_measured_delegated_candidate_shows_its_size() {
+    // The inverse of the above: with an estimate in hand, nothing says
+    // "unknown" and no footnote appears.
+    let mut r = ScanReport {
+        duration: std::time::Duration::from_millis(40),
+        ..Default::default()
+    };
+    r.candidates = vec![Candidate {
+        scanner: "simulators",
+        target: Target::Delegated(sift::scan::DelegatedCmd::new(
+            "xcrun",
+            &["simctl", "delete", "unavailable"],
+        )),
+        bytes_on_disk: 403_000_000,
+        bytes_apparent: 403_000_000,
+        last_modified: Local::now(),
+        risk: Risk::Rebuildable,
+        label: "Simulator devices for uninstalled runtimes".into(),
+        reason: "xcrun simctl delete unavailable".into(),
+    }];
+
+    let out = human::render(&r, &ctx());
+    assert!(out.contains("403 MB"), "{out}");
+    assert!(!out.contains("unknown"), "{out}");
+    assert!(!out.contains("not in that total"), "{out}");
+}
+
+#[test]
 fn the_total_equals_the_sum_of_the_candidates() {
     let r = prd_example();
     let expected: u64 = r.candidates.iter().map(|c| c.bytes_on_disk).sum();
