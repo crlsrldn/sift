@@ -15,6 +15,7 @@ pub mod commands;
 pub mod config;
 pub mod doctor;
 pub mod error;
+pub mod explain;
 pub mod fs;
 pub mod logging;
 pub mod paths;

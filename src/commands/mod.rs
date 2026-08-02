@@ -6,6 +6,7 @@
 pub mod clean;
 pub mod config_check;
 pub mod doctor;
+pub mod explain;
 pub mod install;
 pub mod purge;
 pub mod report;
