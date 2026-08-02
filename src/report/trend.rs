@@ -72,6 +72,17 @@ pub fn sparkline(values: &[u64]) -> String {
         .collect()
 }
 
+/// What is currently staged and when it will be purged.
+fn quarantine_summary() -> Option<(usize, u64, String)> {
+    let runs = crate::action::quarantine::runs().ok()?;
+    if runs.is_empty() {
+        return None;
+    }
+    let bytes: u64 = runs.iter().map(|m| m.total_bytes()).sum();
+    let soonest = runs.iter().map(|m| m.expires_at()).min()?;
+    Some((runs.len(), bytes, soonest.format("%Y-%m-%d").to_string()))
+}
+
 pub fn render(records: &[RunRecord], days: u32) -> String {
     let mut o = String::new();
 
@@ -90,6 +101,15 @@ pub fn render(records: &[RunRecord], days: u32) -> String {
 
     let last = records.last().unwrap();
     let t = Trend::from(records);
+
+    // The last run that actually did something, which is rarely the last run.
+    // Five `sift scan` invocations should not bury the `clean` the user cares
+    // about. Compared by run_id rather than pointer, which is what the earlier
+    // std::ptr::eq attempt got wrong.
+    let last_effective = records
+        .iter()
+        .rev()
+        .find(|r| r.total_identified() > 0 || r.purged_bytes > 0);
 
     let _ = writeln!(
         o,
@@ -119,19 +139,52 @@ pub fn render(records: &[RunRecord], days: u32) -> String {
         let _ = writeln!(o, "  errors             {}", last.total_errors());
     }
 
-    if !last.per_scanner.is_empty() {
+    // Only when there is something to list. An empty "by scanner" heading reads
+    // like a bug.
+    let mut rows: Vec<(&String, u64)> = last
+        .per_scanner
+        .iter()
+        .filter(|(_, r)| r.identified > 0)
+        .map(|(id, r)| (id, r.identified))
+        .collect();
+    if !rows.is_empty() {
+        rows.sort_by_key(|(_, b)| std::cmp::Reverse(*b));
         let _ = writeln!(o);
         let _ = writeln!(o, "  by scanner");
-        let mut rows: Vec<(&String, u64)> = last
-            .per_scanner
-            .iter()
-            .filter(|(_, r)| r.identified > 0)
-            .map(|(id, r)| (id, r.identified))
-            .collect();
-        rows.sort_by_key(|(_, b)| std::cmp::Reverse(*b));
         for (id, bytes) in rows {
             let _ = writeln!(o, "    {id:<24}{}", size(bytes));
         }
+    }
+
+    // The last run that did something, when that is not the last run at all.
+    if let Some(eff) = last_effective {
+        if eff.run_id != last.run_id {
+            let _ = writeln!(o);
+            let _ = writeln!(
+                o,
+                "  last run that acted   {}  ({}, {})",
+                eff.started_at.format("%Y-%m-%d %H:%M"),
+                eff.command,
+                size(eff.total_identified())
+            );
+        }
+    }
+
+    // What is staged right now, and when it goes. This is the most actionable
+    // thing the report can say, and it was missing entirely.
+    if let Some((runs, bytes, expires)) = quarantine_summary() {
+        let _ = writeln!(o);
+        let _ = writeln!(
+            o,
+            "  in quarantine      {} across {} run(s)",
+            size(bytes),
+            runs
+        );
+        let _ = writeln!(
+            o,
+            "                     purged automatically from {expires}"
+        );
+        let _ = writeln!(o, "                     `sift restore <run-id>` to undo");
     }
 
     let _ = writeln!(o);
@@ -156,14 +209,27 @@ pub fn render(records: &[RunRecord], days: u32) -> String {
 
     let spark = sparkline(&t.free_series);
     if !spark.is_empty() {
+        let first = *t.free_series.first().unwrap();
+        let lastf = *t.free_series.last().unwrap();
         let _ = writeln!(o);
         let _ = writeln!(o, "  free space         {spark}");
-        let _ = writeln!(
-            o,
-            "                     {} → {}",
-            size(*t.free_series.first().unwrap()),
-            size(*t.free_series.last().unwrap())
-        );
+        let _ = writeln!(o, "                     {} → {}", size(first), size(lastf));
+        // Free space moves for every reason on the machine, and sift is usually
+        // a small one. Without this the chart reads as sift losing ground when
+        // the user simply filled the disk.
+        if lastf < first {
+            let _ = writeln!(
+                o,
+                "                     down {} overall — that is everything on this",
+                size(first - lastf)
+            );
+            let _ = writeln!(
+                o,
+                "                     machine, not sift. sift identified {} in",
+                size(t.total_identified)
+            );
+            let _ = writeln!(o, "                     the same window.");
+        }
     }
 
     o

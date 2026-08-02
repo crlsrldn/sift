@@ -1,0 +1,122 @@
+.TH SIFT 1 "August 2026" "sift 0.1.0" "User Commands"
+.SH NAME
+sift \- automated, safety-first disk reclamation for macOS
+.SH SYNOPSIS
+.B sift
+[\fICOMMAND\fR] [\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B sift
+identifies reclaimable disk space, attributes it to a named source, and
+reclaims it reversibly on a schedule. It runs as the invoking user, makes no
+network connections, and deletes nothing without an explicit
+.BR clean .
+.PP
+A path becomes a deletion candidate only because a specific scanner claimed it
+by an explicit rule. There is no mode that scans the whole disk and excludes
+what it believes to be dangerous.
+.SH COMMANDS
+.TP
+.B scan
+Report reclaimable space. Deletes nothing. This is the default.
+.TP
+.B clean
+Scan, then move candidates to quarantine. Prompts unless
+.BR \-\-yes .
+Destructive scanners require typing the scanner's name regardless.
+.TP
+.B purge
+Hard-delete quarantined items past their TTL.
+.B \-\-now
+ignores the TTL.
+.TP
+.BI restore " RUN_ID"
+Return a quarantined run to its original locations. A unique prefix suffices.
+Refuses rather than overwrites an occupied destination.
+.TP
+.B report
+Show the last run, what is currently quarantined, and a trend.
+.TP
+.B doctor
+Report permissions, tool availability, and per-scanner status with remediation.
+.TP
+.BI explain " PATH"
+Describe a path, what deleting it would cost, and whether any scanner could
+ever claim it. Deletes nothing.
+.TP
+.B install
+Install the scheduled LaunchAgent.
+.B \-\-dry\-run
+shows the plist and launchctl command without executing either.
+.TP
+.B uninstall
+Remove the agent, plist, quarantine, and configuration. Retains the run history
+and prints its path.
+.TP
+.B config check
+Validate the configuration and print the effective merged values with sources.
+.SH OPTIONS
+.TP
+.B \-\-json
+Emit machine-readable JSON. Logging goes to stderr, so stdout stays parseable.
+.TP
+.BI \-\-config " PATH"
+Use an alternate configuration file.
+.TP
+.B \-\-dry\-run
+For
+.BR clean ", report what would happen and do nothing."
+.TP
+.B \-\-estimate\-delegated
+Run delegated tools to size their candidates. Off by default: it spawns
+subprocesses and lets them create their own cache directories.
+.TP
+.BI \-\-only " GLOB"
+Restrict to scanners matching a glob, e.g. \fBxcode-*\fR.
+.SH EXIT STATUS
+.TP
+.B 0
+Success, including a gated no-op scheduled run.
+.TP
+.B 1
+Unhandled runtime error.
+.TP
+.B 2
+Invalid configuration.
+.TP
+.B 3
+Required permission unavailable and no scanners could run.
+.TP
+.B 4
+Circuit breaker tripped. Nothing was actioned.
+.TP
+.B 5
+Completed with one or more scanner errors.
+.TP
+.B 64
+CLI usage error.
+.SH FILES
+.TP
+.I ~/.config/sift/config.toml
+Configuration. Absence means all defaults.
+.TP
+.I ~/.local/state/sift/quarantine/
+Staged deletions, one directory per run.
+.TP
+.I ~/.local/state/sift/history.jsonl
+One JSON record per run. Retained by
+.BR uninstall .
+.TP
+.I ~/Library/LaunchAgents/com.cindral.sift.plist
+The scheduled agent.
+.SH ENVIRONMENT
+.TP
+.B SIFT_LOG
+Log filter, e.g.
+.BR sift=debug .
+.TP
+.B XDG_CONFIG_HOME ", " XDG_STATE_HOME
+Honoured when set to absolute paths.
+.SH SEE ALSO
+Full documentation in the
+.I docs/
+directory of the source tree.
