@@ -23,6 +23,16 @@ fn ctx() -> ScanCtx {
     .unwrap()
 }
 
+fn ctx_estimating(yes: bool) -> ScanCtx {
+    ScanCtx::new(
+        Arc::new(Config::default()),
+        sift::fs::volume::root().unwrap(),
+        Capabilities::probe(),
+    )
+    .unwrap()
+    .with_delegated_estimates(yes)
+}
+
 fn candidate(
     scanner: &'static str,
     label: &str,
@@ -314,6 +324,109 @@ fn a_measured_delegated_candidate_shows_its_size() {
     assert!(out.contains("403 MB"), "{out}");
     assert!(!out.contains("unknown"), "{out}");
     assert!(!out.contains("not in that total"), "{out}");
+}
+
+#[test]
+fn disabled_findings_are_shown_apart_and_excluded_from_the_total() {
+    // `--include-disabled` reports what switched-off scanners hold. The
+    // report must make it impossible to read those bytes as reclaimable: they
+    // sit in their own block, with their own total, and "Total identified"
+    // keeps meaning "what clean would take".
+    let mut r = ScanReport {
+        duration: std::time::Duration::from_millis(40),
+        ..Default::default()
+    };
+    r.candidates = vec![candidate("logs", "old logs", 1_000_000, Risk::Safe, 40)];
+    r.disabled_candidates = vec![
+        candidate(
+            "simulators",
+            "Simulator devices for uninstalled runtimes",
+            403_000_000,
+            Risk::Rebuildable,
+            1,
+        ),
+        candidate(
+            "homebrew",
+            "Homebrew — stale downloads",
+            38_000_000,
+            Risk::Safe,
+            1,
+        ),
+    ];
+
+    let out = human::render(&r, &ctx());
+
+    // The actionable total is untouched by the disabled block.
+    assert_eq!(r.total_bytes(), 1_000_000);
+    assert_eq!(r.disabled_bytes(), 441_000_000);
+
+    let total_line = out
+        .lines()
+        .find(|l| l.contains("Total identified"))
+        .unwrap_or_else(|| panic!("{out}"));
+    assert!(total_line.contains(&human::size(1_000_000)), "{total_line}");
+    assert!(
+        !total_line.contains(&human::size(441_000_000)),
+        "disabled bytes leaked into the actionable total: {total_line}"
+    );
+
+    // The disabled block says what it is, and says clean will not act.
+    assert!(out.contains("Disabled in config"), "{out}");
+    assert!(out.contains("will not touch these"), "{out}");
+    assert!(out.contains(&human::size(441_000_000)), "{out}");
+    assert!(out.contains(&human::size(403_000_000)), "{out}");
+
+    // The disabled block must come after the real total, so nobody reading
+    // top-down mistakes it for part of the answer.
+    let total_at = out.find("Total identified").unwrap();
+    let disabled_at = out.find("Disabled in config").unwrap();
+    assert!(total_at < disabled_at, "{out}");
+}
+
+#[test]
+fn no_disabled_block_appears_without_the_flag() {
+    let mut r = ScanReport {
+        duration: std::time::Duration::from_millis(40),
+        ..Default::default()
+    };
+    r.candidates = vec![candidate("logs", "old logs", 1_000_000, Risk::Safe, 40)];
+
+    let out = human::render(&r, &ctx());
+    assert!(!out.contains("Disabled in config"), "{out}");
+    assert!(!out.contains("Held by disabled scanners"), "{out}");
+}
+
+#[test]
+fn the_unknown_footnote_does_not_suggest_a_flag_already_given() {
+    // Telling someone to re-run with a flag they just used implies the number
+    // is retrievable, when the tool has already been asked and had no answer.
+    let mut r = ScanReport {
+        duration: std::time::Duration::from_millis(40),
+        ..Default::default()
+    };
+    r.candidates = vec![Candidate {
+        scanner: "python-caches",
+        target: Target::Delegated(sift::scan::DelegatedCmd::new("uv", &["cache", "prune"])),
+        bytes_on_disk: 0,
+        bytes_apparent: 0,
+        last_modified: Local::now(),
+        risk: Risk::Safe,
+        label: "uv cache".into(),
+        reason: "test".into(),
+    }];
+
+    let asked = human::render(&r, &ctx_estimating(true));
+    assert!(asked.contains("did not report one"), "{asked}");
+    assert!(
+        !asked.contains("Re-run with --estimate-delegated"),
+        "{asked}"
+    );
+
+    let not_asked = human::render(&r, &ctx_estimating(false));
+    assert!(
+        not_asked.contains("Re-run with --estimate-delegated"),
+        "{not_asked}"
+    );
 }
 
 #[test]

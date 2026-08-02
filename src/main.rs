@@ -62,6 +62,7 @@ fn run(command: Command, global: &GlobalArgs) -> Result<()> {
             &config,
             a.only.as_deref(),
             a.estimate_delegated,
+            a.include_disabled,
             global.json,
         ),
         Command::Clean(a) => clean::run(

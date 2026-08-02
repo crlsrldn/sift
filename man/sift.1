@@ -72,6 +72,17 @@ Ask delegated tools how much they would reclaim. Without it those lines report
 not a size, and are excluded from the run total. Off by default: it spawns
 subprocesses and lets them create their own cache directories.
 .TP
+.B \-\-include\-disabled
+For
+.BR scan ", also report scanners switched off in config, in a separate block"
+excluded from the run total.
+.B clean
+ignores them regardless, and this option does not exist on it. Overrides the
+.B enabled
+switch only; a scanner above
+.B max_risk
+stays unrun.
+.TP
 .BI \-\-only " GLOB"
 Restrict to scanners matching a glob, e.g. \fBxcode-*\fR.
 .SH EXIT STATUS
