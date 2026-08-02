@@ -158,41 +158,76 @@ impl Runner {
             Err(e) => return Outcome::SpawnFailed(e.to_string()),
         };
 
-        // Poll rather than block, so the timeout is enforceable. `wait_timeout`
-        // would be neater but is another dependency for a loop this small.
-        let start = std::time::Instant::now();
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    let out = child.wait_with_output().ok();
-                    let stdout = out
-                        .as_ref()
-                        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
-                        .unwrap_or_default();
-                    let stderr = out
-                        .as_ref()
-                        .map(|o| String::from_utf8_lossy(&o.stderr).into_owned())
-                        .unwrap_or_default();
+        // Drain the pipes on threads, poll for exit in the parent.
+        //
+        // Two earlier versions were wrong, both in ways that only showed up
+        // intermittently:
+        //
+        //   1. `try_wait()` then `wait_with_output()`. `try_wait` reaps the
+        //      child, so `wait_with_output` had nothing left to wait on and
+        //      both the exit status and the output were lost. It passed most of
+        //      the time because the poll usually saw the child still running.
+        //
+        //   2. Waiting on a thread and killing by raw pid on timeout. The
+        //      parent no longer owned the `Child`, so `libc::kill` could signal
+        //      a pid the OS had already recycled for someone else's process —
+        //      which is exactly what happened: a concurrent test's child was
+        //      killed, and its exit code came back as "terminated by signal".
+        //
+        // This version keeps the `Child` in the parent, so `child.kill()` is
+        // safe by construction (it refuses to signal a reaped child), and moves
+        // only the pipe handles to reader threads, so a child that fills the
+        // pipe buffer cannot deadlock against a parent waiting for it to exit.
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
 
-                    return if status.success() {
-                        Outcome::Ok { stdout, stderr }
-                    } else {
-                        Outcome::Failed {
-                            code: status.code(),
-                            stderr,
-                        }
-                    };
+        let read = |pipe: Option<std::process::ChildStdout>| {
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                if let Some(mut p) = pipe {
+                    use std::io::Read;
+                    let _ = p.read_to_end(&mut buf);
                 }
+                buf
+            })
+        };
+        let out_handle = read(stdout_pipe);
+        let err_handle = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = stderr_pipe {
+                use std::io::Read;
+                let _ = p.read_to_end(&mut buf);
+            }
+            buf
+        });
+
+        let start = std::time::Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
                 Ok(None) => {
                     if start.elapsed() > self.timeout {
+                        // Safe: the parent still owns the Child.
                         let _ = child.kill();
                         let _ = child.wait();
-                        return Outcome::TimedOut(self.timeout);
+                        break None;
                     }
-                    std::thread::sleep(Duration::from_millis(50));
+                    std::thread::sleep(Duration::from_millis(20));
                 }
                 Err(e) => return Outcome::SpawnFailed(e.to_string()),
             }
+        };
+
+        let stdout = String::from_utf8_lossy(&out_handle.join().unwrap_or_default()).into_owned();
+        let stderr = String::from_utf8_lossy(&err_handle.join().unwrap_or_default()).into_owned();
+
+        match status {
+            None => Outcome::TimedOut(self.timeout),
+            Some(s) if s.success() => Outcome::Ok { stdout, stderr },
+            Some(s) => Outcome::Failed {
+                code: s.code(),
+                stderr,
+            },
         }
     }
 }
@@ -215,6 +250,28 @@ pub fn probe(program: &str, args: &[&str], timeout: Duration) -> Outcome {
 mod tests {
     use super::*;
 
+    /// These tests spawn real processes, and run serially.
+    ///
+    /// In parallel they fail intermittently (~10-15%) with the child reporting
+    /// **signal 9**, empty output, on commands as trivial as `echo hello`. That
+    /// is not the timeout path — it returns `TimedOut` before reaching the
+    /// signalled branch — so something outside this code is sending SIGKILL.
+    ///
+    /// **Not root-caused.** The leading hypothesis is macOS jetsam reaping
+    /// short-lived children under memory pressure: it appeared only late in a
+    /// long session on a machine running near its limits, and signal 9 with no
+    /// output is what jetsam looks like. That is a hypothesis, not a finding.
+    ///
+    /// Serialising removes the flake. It does not remove the underlying cause,
+    /// and if a delegated command is ever killed in production the effect is
+    /// bounded: a signalled child surfaces as `Outcome::Failed { code: None }`,
+    /// which the registry records as a scanner error and survives (FR-2).
+    static SPAWN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn spawn_guard() -> std::sync::MutexGuard<'static, ()> {
+        SPAWN_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn caps() -> Capabilities {
         Capabilities::probe()
     }
@@ -232,6 +289,7 @@ mod tests {
 
     #[test]
     fn a_successful_command_reports_its_output() {
+        let _g = spawn_guard();
         let outcome = Runner::new().run(&caps(), &DelegatedCmd::new("echo", &["hello"]));
         match outcome {
             Outcome::Ok { stdout, .. } => assert_eq!(stdout.trim(), "hello"),
@@ -241,6 +299,7 @@ mod tests {
 
     #[test]
     fn a_non_zero_exit_is_an_error_and_keeps_the_message() {
+        let _g = spawn_guard();
         // FR-2: recorded, and the run continues. The first stderr line is kept
         // because "exited 1" alone tells the user nothing.
         let outcome = Runner::new().run(
@@ -265,6 +324,7 @@ mod tests {
 
     #[test]
     fn a_hanging_command_is_killed_at_the_timeout() {
+        let _g = spawn_guard();
         // A wedged daemon must not leave a 03:00 run still holding the machine
         // at 09:00.
         let outcome = Runner::new()
@@ -277,6 +337,7 @@ mod tests {
 
     #[test]
     fn dry_run_reports_the_command_line_and_executes_nothing() {
+        let _g = spawn_guard();
         // Verified by effect: the command would create a file, and does not.
         let dir = tempfile::tempdir().unwrap();
         let marker = dir.path().join("SHOULD_NOT_EXIST");
@@ -307,6 +368,7 @@ mod tests {
 
     #[test]
     fn stdin_is_closed_so_a_prompting_tool_cannot_hang_the_run() {
+        let _g = spawn_guard();
         // `read` on a null stdin returns EOF immediately rather than blocking.
         let outcome = Runner::new().timeout(Duration::from_secs(5)).run(
             &caps(),
@@ -331,6 +393,7 @@ mod tests {
 
     #[test]
     fn probe_is_available_for_side_effect_free_size_estimates() {
+        let _g = spawn_guard();
         // FR-1: `scan` must not mutate anything, so a size estimate needs a
         // path that is visibly not an action.
         match probe("echo", &["42"], Duration::from_secs(5)) {

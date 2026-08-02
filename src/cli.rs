@@ -84,6 +84,9 @@ pub enum Command {
     /// Remove the LaunchAgent, purge quarantine, and clean up.
     Uninstall,
 
+    /// Explain what a path is and whether sift would ever touch it.
+    Explain(ExplainArgs),
+
     /// Configuration commands.
     #[command(subcommand)]
     Config(ConfigCommand),
@@ -142,6 +145,12 @@ pub struct PurgeArgs {
     /// Skip the confirmation prompt.
     #[arg(long)]
     pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct ExplainArgs {
+    /// The path to explain. `~` is expanded.
+    pub path: PathBuf,
 }
 
 #[derive(Debug, Args)]
