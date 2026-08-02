@@ -21,10 +21,18 @@ EXIT CODES:
 Nothing is deleted without an explicit `clean` and, unless --yes is given, a
 confirmation. `sift` with no arguments reports and exits.";
 
+/// What `--version` prints.
+///
+/// `CARGO_PKG_VERSION` alone cannot distinguish two builds from different
+/// commits, and the documented install path is building from source — so the
+/// commit is the part that actually answers "am I current?". Assembled in
+/// `build.rs`; see there for why the tree state is included.
+pub const VERSION: &str = env!("SIFT_VERSION");
+
 #[derive(Debug, Parser)]
 #[command(
     name = "sift",
-    version,
+    version = VERSION,
     about = "Automated, safety-first disk reclamation for macOS",
     long_about = None,
     after_help = AFTER_HELP,
@@ -332,6 +340,73 @@ mod tests {
                 other => panic!("expected scan, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn the_version_identifies_the_build_not_just_the_crate() {
+        // `0.1.0` alone cannot answer "am I running the current code?", which
+        // is the question that matters when the install path is building from
+        // source. Before this, the only way to tell was hashing the binary
+        // against a fresh build.
+        assert!(VERSION.starts_with(env!("CARGO_PKG_VERSION")), "{VERSION}");
+        assert!(
+            VERSION.len() > env!("CARGO_PKG_VERSION").len(),
+            "the version carries no build detail: {VERSION}"
+        );
+        assert!(VERSION.contains("built "), "{VERSION}");
+    }
+
+    #[test]
+    fn the_version_carries_a_well_formed_date() {
+        // Not compared against today: the stamp is fixed when build.rs last
+        // ran, which may be days before a test run. The shape is what proves
+        // the date arithmetic produced a date at all — `civil_from_days` has
+        // its own tests for whether it is the right one.
+        let date = VERSION
+            .split("built ")
+            .nth(1)
+            .and_then(|s| s.split(')').next())
+            .unwrap_or_else(|| panic!("no build date in {VERSION}"));
+
+        let parts: Vec<&str> = date.split('-').collect();
+        assert_eq!(parts.len(), 3, "expected YYYY-MM-DD, got `{date}`");
+        assert_eq!(parts[0].len(), 4, "{date}");
+
+        let year: i64 = parts[0].parse().unwrap_or_else(|_| panic!("{date}"));
+        let month: u32 = parts[1].parse().unwrap_or_else(|_| panic!("{date}"));
+        let day: u32 = parts[2].parse().unwrap_or_else(|_| panic!("{date}"));
+
+        // A broken epoch conversion lands in 1970 or far in the future; a
+        // broken month/day calculation escapes these ranges.
+        assert!((2024..=2100).contains(&year), "{date}");
+        assert!((1..=12).contains(&month), "{date}");
+        assert!((1..=31).contains(&day), "{date}");
+    }
+
+    #[test]
+    fn a_commit_is_named_when_one_is_knowable() {
+        // In a git checkout the hash must be there. From a source tarball it
+        // legitimately cannot be, and build.rs omits it rather than inventing
+        // one — so this only asserts when `.git` is present.
+        if !std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(".git")
+            .exists()
+        {
+            return;
+        }
+
+        let inside = VERSION
+            .split_once('(')
+            .and_then(|(_, rest)| rest.split_once(','))
+            .map(|(sha, _)| sha)
+            .unwrap_or_else(|| panic!("no commit in {VERSION}"));
+
+        let sha = inside.strip_suffix("-dirty").unwrap_or(inside);
+        assert_eq!(sha.len(), 7, "expected a short hash, got `{sha}`");
+        assert!(
+            sha.chars().all(|c| c.is_ascii_hexdigit()),
+            "not a hash: `{sha}`"
+        );
     }
 
     #[test]

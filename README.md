@@ -55,6 +55,19 @@ path in the LaunchAgent, so installing through a symlink would point launchd at
 `target/release/sift` — and `cargo clean` would then break your scheduled run
 silently. `sift install` refuses to schedule a build artifact for this reason.
 
+**Checking what you have.** Since there are no releases yet, the crate version
+alone cannot tell you which build you are running, so `--version` carries the
+commit:
+
+```
+$ sift --version
+sift 0.1.0 (d6c302d, built 2026-08-02)
+```
+
+A `-dirty` suffix means the tree had uncommitted changes when it was built.
+Builds honour `SOURCE_DATE_EPOCH`, so the same source produces a byte-identical
+binary.
+
 ## Use
 
 ```bash
