@@ -369,6 +369,106 @@ fn clean_with_nothing_eligible_is_a_clean_no_op() {
 }
 
 #[test]
+fn a_no_op_clean_still_records_that_it_ran() {
+    // The bug this exists for: `clean` returned before appending to history
+    // whenever nothing was eligible, so the healthiest outcome of an
+    // unattended run was the one that left no trace. A real 03:00 agent run
+    // scanned correctly, found nothing, exited 0 — and `sift report` still
+    // showed the previous day's run as the most recent, with no way to tell
+    // "ran and found nothing" from "never ran".
+    //
+    // The test that was here checked the exit code, the output, and that user
+    // data was untouched. All three passed throughout.
+    let sb = Sandbox::new();
+    let history = sb.dir.path().join("state/sift/history.jsonl");
+
+    let out = sb.run(&["clean", "--yes", "--only", "xcode-*"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(stdout(&out).contains("nothing to clean"));
+
+    assert!(
+        history.exists(),
+        "a run that did nothing must still say it happened"
+    );
+    let text = std::fs::read_to_string(&history).unwrap();
+    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(lines.len(), 1, "expected exactly one record: {text}");
+
+    let rec: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(rec["command"], "clean");
+    assert!(rec["started_at"].is_string());
+    // Recorded as a run, not as a gated no-op — those are different states and
+    // `sift report` treats them differently.
+    assert!(rec["gated_reason"].is_null(), "{rec}");
+}
+
+#[test]
+fn a_purge_on_a_night_with_nothing_to_stage_is_recorded() {
+    // The more damaging half. `purge_expired` runs before the eligibility
+    // check, so a TTL reaching its seventh day on a quiet night was reclaiming
+    // real bytes and reporting them to a log file only — never to the history
+    // or the trend.
+    let sb = Sandbox::new();
+    sb.seed_cargo_cache(256 * 1024);
+
+    // Stage something, then age the quarantine past its TTL.
+    let out = sb.run(&["clean", "--yes", "--only", "cargo-cache"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
+
+    let qroot = sb.dir.path().join("state/sift/quarantine");
+    let run_dir = std::fs::read_dir(&qroot)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().is_dir())
+        .expect("a quarantine run should exist")
+        .path();
+
+    let manifest_path = run_dir.join("manifest.json");
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    let expired = chrono::Local::now() - chrono::Duration::days(8);
+    manifest["created_at"] = serde_json::Value::String(expired.to_rfc3339());
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+
+    // A run with nothing new to stage. The expired quarantine must still be
+    // purged *and* accounted for.
+    let out = sb.run(&["clean", "--yes", "--only", "xcode-*"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
+    assert!(
+        stdout(&out).contains("nothing to clean"),
+        "{}",
+        stdout(&out)
+    );
+
+    let text = std::fs::read_to_string(sb.dir.path().join("state/sift/history.jsonl")).unwrap();
+    let last: serde_json::Value =
+        serde_json::from_str(text.lines().rfind(|l| !l.trim().is_empty()).unwrap()).unwrap();
+
+    let purged = last["purged_bytes"].as_u64().unwrap_or(0);
+    assert!(
+        purged > 0,
+        "the purge freed bytes that never reached the history: {last}"
+    );
+}
+
+#[test]
+fn a_no_op_dry_run_still_records_nothing() {
+    // --dry-run mutates nothing, and the history file is part of "nothing".
+    let sb = Sandbox::new();
+    let out = sb.run(&["clean", "--dry-run", "--yes", "--only", "xcode-*"]);
+
+    assert_eq!(out.status.code(), Some(0));
+    assert!(
+        !sb.dir.path().join("state/sift/history.jsonl").exists(),
+        "--dry-run appended to run history"
+    );
+}
+
+#[test]
 fn only_restricts_clean_to_the_named_scanners() {
     let sb = Sandbox::new();
     let cache = sb.seed_cargo_cache(64 * 1024);
