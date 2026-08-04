@@ -91,6 +91,26 @@ impl RunRecord {
         self.per_scanner.values().map(|s| s.identified).sum()
     }
 
+    /// Bytes this run actually staged to quarantine.
+    ///
+    /// Distinct from [`total_identified`](Self::total_identified), and the
+    /// distinction is the whole of Principle 2: `sift scan` identifies and can
+    /// never act, so a run with a large `identified` and a zero here did
+    /// nothing at all.
+    pub fn total_quarantined(&self) -> u64 {
+        self.per_scanner.values().map(|s| s.quarantined).sum()
+    }
+
+    /// Whether this run changed anything on disk.
+    ///
+    /// Staging or purging counts; identifying does not. Using `identified` for
+    /// this made every `sift scan` look like a run that acted — and since
+    /// scans are far more frequent than cleans, the report then named a scan
+    /// as "the last run that acted" while the real one scrolled out of view.
+    pub fn acted(&self) -> bool {
+        self.total_quarantined() > 0 || self.purged_bytes > 0
+    }
+
     pub fn total_errors(&self) -> u32 {
         self.per_scanner.values().map(|s| s.errors).sum()
     }
