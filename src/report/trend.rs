@@ -106,10 +106,13 @@ pub fn render(records: &[RunRecord], days: u32) -> String {
     // Five `sift scan` invocations should not bury the `clean` the user cares
     // about. Compared by run_id rather than pointer, which is what the earlier
     // std::ptr::eq attempt got wrong.
-    let last_effective = records
-        .iter()
-        .rev()
-        .find(|r| r.total_identified() > 0 || r.purged_bytes > 0);
+    //
+    // The predicate used to be `total_identified() > 0`, which meant a scan
+    // qualified — and a scan cannot act, by construction (Principle 2). On a
+    // real history that had staged 1.7 GB once and then run a dozen scans, the
+    // report named a 20 MB *scan* as the last run that acted and hid the clean
+    // holding the quarantine.
+    let last_effective = records.iter().rev().find(|r| r.acted());
 
     let _ = writeln!(
         o,
@@ -165,7 +168,8 @@ pub fn render(records: &[RunRecord], days: u32) -> String {
                 "  last run that acted   {}  ({}, {})",
                 eff.started_at.format("%Y-%m-%d %H:%M"),
                 eff.command,
-                size(eff.total_identified())
+                // What it staged, not what it noticed.
+                size(eff.total_quarantined())
             );
         }
     }
@@ -278,6 +282,96 @@ mod tests {
             gated_reason: None,
             command: "scan".into(),
         }
+    }
+
+    /// A `clean` that actually staged bytes.
+    fn cleaned(run_id: &str, quarantined: u64) -> RunRecord {
+        let mut r = rec(1_000, quarantined);
+        r.run_id = run_id.into();
+        r.command = "clean".into();
+        r.per_scanner.get_mut("logs").unwrap().quarantined = quarantined;
+        r
+    }
+
+    /// A `scan` that identified bytes and, being a scan, staged none.
+    fn scanned(run_id: &str, identified: u64) -> RunRecord {
+        let mut r = rec(1_000, identified);
+        r.run_id = run_id.into();
+        r
+    }
+
+    #[test]
+    fn a_scan_is_never_the_last_run_that_acted() {
+        // Taken from a real history: one clean staged 1.7 GB, then a dozen
+        // scans identified smaller amounts. The predicate was
+        // `total_identified() > 0`, so the most recent 20 MB *scan* was named
+        // as the run that acted and the clean holding the quarantine vanished
+        // from the report.
+        //
+        // A scan cannot act. That is Principle 2, and it is enforced
+        // structurally — so a report claiming otherwise is stating something
+        // the architecture makes impossible.
+        let records = vec![
+            cleaned("the-clean", 1_683_558_400),
+            scanned("scan-1", 18_710_528),
+            scanned("scan-2", 403_431_424),
+            scanned("scan-3", 20_140_032),
+        ];
+
+        let out = render(&records, 90);
+        let line = out
+            .lines()
+            .find(|l| l.contains("last run that acted"))
+            .unwrap_or_else(|| panic!("{out}"));
+
+        assert!(line.contains("clean"), "named a scan as acting: {line}");
+        assert!(!line.contains("scan"), "named a scan as acting: {line}");
+        // And the figure is what it staged, not what some scan noticed.
+        assert!(line.contains(&size(1_683_558_400)), "{line}");
+        assert!(!line.contains(&size(20_140_032)), "{line}");
+    }
+
+    #[test]
+    fn a_history_of_scans_alone_names_no_acting_run() {
+        // Nothing has acted, so the line must be absent rather than pointing
+        // at whichever scan happened to identify the most.
+        let records = vec![scanned("a", 5_000), scanned("b", 9_000)];
+        let out = render(&records, 90);
+        assert!(
+            !out.contains("last run that acted"),
+            "claimed a run acted when none did:\n{out}"
+        );
+    }
+
+    #[test]
+    fn a_purge_counts_as_acting_even_with_nothing_staged() {
+        // A run that staged nothing but expired a quarantine did change the
+        // disk, and is the run a user asking "what happened to my space?"
+        // needs to find.
+        let mut purger = scanned("purger", 0);
+        purger.command = "clean".into();
+        purger.purged_bytes = 900_000_000;
+
+        let records = vec![purger, scanned("later-scan", 40_000_000)];
+        let out = render(&records, 90);
+        let line = out
+            .lines()
+            .find(|l| l.contains("last run that acted"))
+            .unwrap_or_else(|| panic!("{out}"));
+        assert!(line.contains("clean"), "{line}");
+    }
+
+    #[test]
+    fn acted_distinguishes_identifying_from_staging() {
+        assert!(!scanned("s", 5_000_000).acted(), "a scan never acts");
+        assert!(cleaned("c", 5_000_000).acted());
+
+        let mut staged_nothing = scanned("c2", 5_000_000);
+        staged_nothing.command = "clean".into();
+        assert!(
+            !staged_nothing.acted(),
+            "a clean that staged nothing did not act"
+        );
     }
 
     #[test]
